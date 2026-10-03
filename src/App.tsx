@@ -20,8 +20,9 @@ import { Student, StudentFormData } from './types/student';
 import { LocalPdfFile, MatchedItem } from './types/pdf';
 import { WhatsAppStatus } from './types/whatsapp';
 import { HistoryItem } from './types/history';
+import { MessageTemplate } from './types/template';
 
-import { storageService, INITIAL_STUDENTS } from './services/storageService';
+import { storageService, INITIAL_STUDENTS, DEFAULT_TEMPLATE } from './services/storageService';
 import { matchStudentsWithPdfs } from './services/pdfMatcher';
 import { OpenWAProvider } from './services/whatsapp/OpenWAProvider';
 import { MockWhatsAppProvider } from './services/whatsapp/MockProvider';
@@ -35,9 +36,17 @@ export default function App() {
 
   // Persistent States
   const [students, setStudents] = useState<Student[]>(() => storageService.getStudents());
-  const [template, setTemplate] = useState<string>(() => storageService.getTemplate());
+  const [templates, setTemplates] = useState<MessageTemplate[]>(() => storageService.getTemplates());
+  const [activeTemplateId, setActiveTemplateId] = useState<string>(() => storageService.getActiveTemplateId());
   const [config, setConfig] = useState(() => storageService.getConfig());
   const [history, setHistory] = useState<HistoryItem[]>(() => storageService.getHistory());
+
+  // Active Template derived content
+  const activeTemplate = useMemo(
+    () => templates.find((t) => t.id === activeTemplateId) || templates[0],
+    [templates, activeTemplateId]
+  );
+  const template = activeTemplate ? activeTemplate.content : DEFAULT_TEMPLATE;
 
   // PDF & Folder State
   const [folderPath, setFolderPath] = useState<string>('');
@@ -264,17 +273,35 @@ export default function App() {
     storageService.saveStudents(updated);
   };
 
-  const handleResetStudents = () => {
-    if (window.confirm('Öğrenci listesi 10 kişilik varsayılan listeye sıfırlanacak. Onaylıyor musunuz?')) {
-      setStudents(INITIAL_STUDENTS);
-      storageService.saveStudents(INITIAL_STUDENTS);
-    }
+  const handleBulkAddStudents = (newStudents: Student[]) => {
+    const updated = [...students, ...newStudents];
+    setStudents(updated);
+    storageService.saveStudents(updated);
   };
 
-  // 7. Template Action
-  const handleSaveTemplate = (newTemplate: string) => {
-    setTemplate(newTemplate);
-    storageService.saveTemplate(newTemplate);
+  const handleClearAllStudents = () => {
+    setStudents([]);
+    storageService.clearAllStudents();
+  };
+
+  const handleResetStudents = () => {
+    setStudents([]);
+    storageService.clearAllStudents();
+  };
+
+  // 7. Template Actions
+  const handleSelectTemplate = (id: string) => {
+    setActiveTemplateId(id);
+    storageService.setActiveTemplateId(id);
+  };
+
+  const handleSaveTemplates = (updatedTemplates: MessageTemplate[], newActiveId?: string) => {
+    setTemplates(updatedTemplates);
+    storageService.saveTemplates(updatedTemplates);
+    if (newActiveId) {
+      setActiveTemplateId(newActiveId);
+      storageService.setActiveTemplateId(newActiveId);
+    }
   };
 
   // 8. History Action
@@ -308,6 +335,7 @@ export default function App() {
         onChangeTab={setActiveTab}
         studentCount={students.length}
         historyCount={history.length}
+        templateCount={templates.length}
       />
 
       {/* Main Content Area */}
@@ -331,6 +359,9 @@ export default function App() {
               onRetrySingleItem={handleRetrySingleItem}
               isSending={isSending}
               hasFolderSelected={Boolean(folderPath)}
+              templates={templates}
+              activeTemplateId={activeTemplateId}
+              onSelectTemplate={handleSelectTemplate}
             />
           </div>
         )}
@@ -342,13 +373,17 @@ export default function App() {
             onUpdateStudent={handleUpdateStudent}
             onDeleteStudent={handleDeleteStudent}
             onResetToDefaults={handleResetStudents}
+            onBulkAddStudents={handleBulkAddStudents}
+            onClearAllStudents={handleClearAllStudents}
           />
         )}
 
         {activeTab === 'template' && (
           <TemplateEditor
-            template={template}
-            onSaveTemplate={handleSaveTemplate}
+            templates={templates}
+            activeTemplateId={activeTemplateId}
+            onSelectTemplate={handleSelectTemplate}
+            onSaveTemplates={handleSaveTemplates}
             sampleStudent={students[0]}
           />
         )}
@@ -393,6 +428,9 @@ export default function App() {
         matchedItems={matchedItems}
         whatsAppStatus={whatsAppStatus}
         delaySeconds={config.delaySeconds || 3}
+        templates={templates}
+        activeTemplateId={activeTemplateId}
+        onSelectTemplate={handleSelectTemplate}
       />
 
       <SendingProgressModal

@@ -8,6 +8,7 @@ interface TabsProps {
   onChangeTab: (tab: TabType) => void;
   studentCount: number;
   historyCount: number;
+  templateCount?: number;
 }
 
 export const Tabs: React.FC<TabsProps> = ({
@@ -15,6 +16,7 @@ export const Tabs: React.FC<TabsProps> = ({
   onChangeTab,
   studentCount,
   historyCount,
+  templateCount = 0,
 }) => {
   const tabs = [
     { id: 'send' as TabType, label: 'Ana Gönderim', icon: Send },
@@ -23,7 +25,11 @@ export const Tabs: React.FC<TabsProps> = ({
       label: `Öğrenciler (${studentCount})`,
       icon: Users,
     },
-    { id: 'template' as TabType, label: 'Mesaj Şablonu', icon: FileText },
+    {
+      id: 'template' as TabType,
+      label: `Mesaj Şablonları ${templateCount > 0 ? `(${templateCount})` : ''}`,
+      icon: FileText,
+    },
     {
       id: 'history' as TabType,
       label: `Gönderim Geçmişi ${historyCount > 0 ? `(${historyCount})` : ''}`,

@@ -1,8 +1,9 @@
 import React from 'react';
 import { MatchedItem } from '../types/pdf';
 import { WhatsAppStatus } from '../types/whatsapp';
+import { MessageTemplate } from '../types/template';
 import { formatPhoneDisplay } from '../services/normalizer';
-import { CheckCircle2, AlertTriangle, AlertCircle, RefreshCw, Send, FileCheck } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, AlertCircle, RefreshCw, Send, FileCheck, MessageSquare } from 'lucide-react';
 
 interface MatchingTableProps {
   matchedItems: MatchedItem[];
@@ -11,6 +12,9 @@ interface MatchingTableProps {
   onRetrySingleItem: (item: MatchedItem) => void;
   isSending: boolean;
   hasFolderSelected: boolean;
+  templates: MessageTemplate[];
+  activeTemplateId: string;
+  onSelectTemplate: (id: string) => void;
 }
 
 export const MatchingTable: React.FC<MatchingTableProps> = ({
@@ -20,6 +24,9 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
   onRetrySingleItem,
   isSending,
   hasFolderSelected,
+  templates,
+  activeTemplateId,
+  onSelectTemplate,
 }) => {
   const readyCount = matchedItems.filter((i) => i.status === 'ready').length;
   const missingCount = matchedItems.filter((i) => i.status === 'missing_pdf').length;
@@ -27,6 +34,9 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
 
   const isConnected = whatsAppStatus.state === 'connected';
   const canSend = readyCount > 0 && !isSending;
+
+  const selectedTemplate =
+    templates.find((t) => t.id === activeTemplateId) || templates[0];
 
   const getStatusBadge = (item: MatchedItem) => {
     // If currently sending or sent
@@ -92,7 +102,36 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
   };
 
   return (
-    <div className="bg-white border border-neutral-200 rounded overflow-hidden">
+    <div className="bg-white border border-neutral-200 rounded-lg overflow-hidden shadow-2xs">
+      {/* Top Template Selection Toolbar */}
+      <div className="px-4 py-2.5 bg-neutral-50/90 border-b border-neutral-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 text-xs">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-neutral-600 font-medium flex items-center gap-1.5 shrink-0">
+            <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Mesaj Şablonu:</span>
+          </span>
+          <select
+            value={activeTemplateId}
+            onChange={(e) => onSelectTemplate(e.target.value)}
+            className="px-2.5 py-1 bg-white border border-neutral-300 rounded font-medium text-neutral-800 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-hidden shadow-2xs"
+          >
+            {templates.map((tmpl) => (
+              <option key={tmpl.id} value={tmpl.id}>
+                🏷️ [{tmpl.tag || 'Genel'}] {tmpl.title}
+              </option>
+            ))}
+          </select>
+          {selectedTemplate?.tag && (
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+              {selectedTemplate.tag}
+            </span>
+          )}
+        </div>
+        <span className="text-[11px] text-neutral-500 italic truncate max-w-sm hidden md:inline-block" title={selectedTemplate?.content}>
+          Önizleme: &quot;{selectedTemplate?.content.replace(/\n/g, ' ').slice(0, 50)}...&quot;
+        </span>
+      </div>
+
       {/* Table Container */}
       <div className="overflow-x-auto">
         <table className="w-full text-left text-xs border-collapse">
