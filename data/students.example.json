@@ -1,0 +1,64 @@
+{
+  "students": [
+    {
+      "id": "1",
+      "studentName": "Ahmet Yılmaz",
+      "parentName": "Mehmet Yılmaz",
+      "phone": "905321112233"
+    },
+    {
+      "id": "2",
+      "studentName": "Ayşe Demir",
+      "parentName": "Ali Demir",
+      "phone": "905332223344"
+    },
+    {
+      "id": "3",
+      "studentName": "Mehmet Kaya",
+      "parentName": "Hasan Kaya",
+      "phone": "905353334455"
+    },
+    {
+      "id": "4",
+      "studentName": "Zeynep Çelik",
+      "parentName": "Fatma Çelik",
+      "phone": "905364445566"
+    },
+    {
+      "id": "5",
+      "studentName": "Can Öztürk",
+      "parentName": "Burak Öztürk",
+      "phone": "905375556677"
+    },
+    {
+      "id": "6",
+      "studentName": "Elif Şahin",
+      "parentName": "Kemal Şahin",
+      "phone": "905386667788"
+    },
+    {
+      "id": "7",
+      "studentName": "Burak Aydın",
+      "parentName": "Selin Aydın",
+      "phone": "905397778899"
+    },
+    {
+      "id": "8",
+      "studentName": "İrem Güneş",
+      "parentName": "Murat Güneş",
+      "phone": "905418889900"
+    },
+    {
+      "id": "9",
+      "studentName": "Emre Koç",
+      "parentName": "Derya Koç",
+      "phone": "905429990011"
+    },
+    {
+      "id": "10",
+      "studentName": "Defne Yıldız",
+      "parentName": "Okan Yıldız",
+      "phone": "905431110022"
+    }
+  ]
+}

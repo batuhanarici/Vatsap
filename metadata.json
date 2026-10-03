@@ -1,0 +1,6 @@
+{
+  "name": "WhatsApp Karne Gönderici",
+  "description": "Haftalık sınav karne PDF'lerini velilere WhatsApp üzerinden güvenli ve otomatik olarak gönderen masaüstü yardımcı aracı.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
