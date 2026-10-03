@@ -14,10 +14,13 @@ export const DEFAULT_TEMPLATE = `Merhaba {veli_adi},
 Bilginize sunarım.`;
 
 export const DEFAULT_CONFIG: OpenWAConfig & { testPhone: string; delaySeconds: number } = {
+  providerType: 'whatsapp_web',
   baseUrl: 'http://localhost:2785/api',
   apiKey: '',
   sessionId: 'default',
   autoStart: true,
+  metaToken: '',
+  metaPhoneNumberId: '',
   testPhone: '',
   delaySeconds: 3
 };

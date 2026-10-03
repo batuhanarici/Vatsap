@@ -25,6 +25,8 @@ import { storageService, INITIAL_STUDENTS } from './services/storageService';
 import { matchStudentsWithPdfs } from './services/pdfMatcher';
 import { OpenWAProvider } from './services/whatsapp/OpenWAProvider';
 import { MockWhatsAppProvider } from './services/whatsapp/MockProvider';
+import { WhatsAppWebProvider } from './services/whatsapp/WhatsAppWebProvider';
+import { MetaCloudProvider } from './services/whatsapp/MetaCloudProvider';
 import { executeSenderQueue, QueueProgressEvent } from './services/senderQueue';
 
 export default function App() {
@@ -42,17 +44,37 @@ export default function App() {
   const [pdfFiles, setPdfFiles] = useState<LocalPdfFile[]>([]);
 
   // WhatsApp Providers
-  const [isMockMode, setIsMockMode] = useState<boolean>(true);
+  const [isMockMode, setIsMockMode] = useState<boolean>(false);
   const openWaProvider = useMemo(() => new OpenWAProvider(config), [config]);
   const mockProvider = useMemo(() => new MockWhatsAppProvider(true), []);
+  const webProvider = useMemo(() => new WhatsAppWebProvider(), []);
+  const metaCloudProvider = useMemo(
+    () =>
+      new MetaCloudProvider({
+        accessToken: config.metaToken || '',
+        phoneNumberId: config.metaPhoneNumberId || '',
+      }),
+    [config.metaToken, config.metaPhoneNumberId]
+  );
 
-  const activeProvider = isMockMode ? mockProvider : openWaProvider;
+  const activeProvider = useMemo(() => {
+    if (isMockMode) return mockProvider;
+    switch (config.providerType) {
+      case 'meta_cloud':
+        return metaCloudProvider;
+      case 'openwa':
+        return openWaProvider;
+      case 'whatsapp_web':
+      default:
+        return webProvider;
+    }
+  }, [isMockMode, config.providerType, mockProvider, metaCloudProvider, openWaProvider, webProvider]);
 
   // WhatsApp Connection State
   const [whatsAppStatus, setWhatsAppStatus] = useState<WhatsAppStatus>({
-    state: isMockMode ? 'connected' : 'disconnected',
+    state: 'connected',
     sessionId: config.sessionId,
-    details: isMockMode ? 'Test modu aktif (WhatsApp bağlı)' : 'Bağlantı kontrol edilmedi'
+    details: 'WhatsApp Web Modu Aktif (API Anahtarı Gerekmez)'
   });
   const [isCheckingStatus, setIsCheckingStatus] = useState<boolean>(false);
   const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null);
@@ -100,7 +122,7 @@ export default function App() {
       setWhatsAppStatus({
         state: 'disconnected',
         sessionId: config.sessionId,
-        details: 'OpenWA servisine bağlanılamadı.'
+        details: 'Bağlantı sağlanamadı.'
       });
     } finally {
       setIsCheckingStatus(false);
@@ -110,7 +132,7 @@ export default function App() {
   useEffect(() => {
     checkStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMockMode, config.baseUrl, config.sessionId, config.apiKey]);
+  }, [isMockMode, config.providerType, config.baseUrl, config.sessionId, config.apiKey, config.metaToken, config.metaPhoneNumberId]);
 
   // 3. Folder & Sample PDF Handlers
   const handleFolderSelected = (path: string, files: LocalPdfFile[]) => {

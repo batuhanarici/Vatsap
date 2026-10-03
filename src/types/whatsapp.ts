@@ -20,11 +20,16 @@ export interface SendResult {
   error?: string;
 }
 
+export type WhatsAppProviderType = 'whatsapp_web' | 'meta_cloud' | 'openwa' | 'mock';
+
 export interface OpenWAConfig {
+  providerType?: WhatsAppProviderType;
   baseUrl: string; // e.g. http://localhost:2785/api
   apiKey: string;
   sessionId: string;
   autoStart: boolean;
+  metaToken?: string;
+  metaPhoneNumberId?: string;
 }
 
 export interface MessageTemplate {
