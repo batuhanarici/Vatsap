@@ -15,6 +15,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { TestMessageModal } from './components/TestMessageModal';
 import { SendConfirmModal } from './components/SendConfirmModal';
 import { SendingProgressModal } from './components/SendingProgressModal';
+import { PdfPreviewModal } from './components/PdfPreviewModal';
 
 import { Student, StudentFormData } from './types/student';
 import { LocalPdfFile, MatchedItem } from './types/pdf';
@@ -22,8 +23,9 @@ import { WhatsAppStatus } from './types/whatsapp';
 import { HistoryItem } from './types/history';
 import { MessageTemplate } from './types/template';
 
-import { storageService, INITIAL_STUDENTS, DEFAULT_TEMPLATE } from './services/storageService';
+import { storageService, INITIAL_STUDENTS, SAMPLE_TEST_STUDENTS, DEFAULT_TEMPLATE } from './services/storageService';
 import { matchStudentsWithPdfs } from './services/pdfMatcher';
+import { performDeepPdfContentMatching, OcrScanProgress } from './services/pdfTextExtractor';
 import { OpenWAProvider } from './services/whatsapp/OpenWAProvider';
 import { MockWhatsAppProvider } from './services/whatsapp/MockProvider';
 import { WhatsAppWebProvider } from './services/whatsapp/WhatsAppWebProvider';
@@ -93,12 +95,15 @@ export default function App() {
   const [isTestModalOpen, setIsTestModalOpen] = useState<boolean>(false);
   const [isConfirmOpen, setIsConfirmOpen] = useState<boolean>(false);
   const [isProgressOpen, setIsProgressOpen] = useState<boolean>(false);
+  const [previewItem, setPreviewItem] = useState<MatchedItem | null>(null);
+  const [isPreviewOpen, setIsPreviewOpen] = useState<boolean>(false);
 
   // Queue Sending State
   const [isSending, setIsSending] = useState<boolean>(false);
   const [progressEvent, setProgressEvent] = useState<QueueProgressEvent | null>(null);
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
   const cancelSendingRef = useRef<boolean>(false);
+  const [selectedGroup, setSelectedGroup] = useState<string>('all');
 
   // Individual item overrides (for runtime updates during queue or manual retries)
   const [itemOverrides, setItemOverrides] = useState<Record<string, Partial<MatchedItem>>>({});
@@ -144,6 +149,54 @@ export default function App() {
   }, [isMockMode, config.providerType, config.baseUrl, config.sessionId, config.apiKey, config.metaToken, config.metaPhoneNumberId]);
 
   // 3. Folder & Sample PDF Handlers
+  const [isOcrScanning, setIsOcrScanning] = useState<boolean>(false);
+  const [ocrProgress, setOcrProgress] = useState<OcrScanProgress | null>(null);
+
+  const assignedPdfNames = useMemo(
+    () => new Set(matchedItems.filter((i) => i.pdfFile !== null).map((i) => i.pdfFile!.name)),
+    [matchedItems]
+  );
+  const unassignedPdfCount = useMemo(
+    () => pdfFiles.filter((pdf) => !assignedPdfNames.has(pdf.name)).length,
+    [pdfFiles, assignedPdfNames]
+  );
+
+  const handleStartOcrScan = async () => {
+    setIsOcrScanning(true);
+    setOcrProgress({ current: 0, total: pdfFiles.length, currentFileName: 'Başlatılıyor...' });
+
+    try {
+      const result = await performDeepPdfContentMatching(
+        matchedItems,
+        pdfFiles,
+        (progress) => {
+          setOcrProgress(progress);
+        }
+      );
+
+      const newOverrides: Record<string, Partial<MatchedItem>> = {};
+      result.updatedMatches.forEach((updated) => {
+        if (updated.matchMethod === 'content_ocr') {
+          newOverrides[updated.id] = updated;
+        }
+      });
+
+      setItemOverrides((prev) => ({ ...prev, ...newOverrides }));
+
+      if (result.matchedCount > 0) {
+        alert(`${result.matchedCount} öğrenci PDF içerisindeki isim okunarak başarıyla eşleştirildi!`);
+      } else {
+        alert('Taranan PDF dosyalarının içeriğinde eksik kalan öğrencilerin isimleri bulunamadı.');
+      }
+    } catch (err) {
+      console.error('OCR scanning error:', err);
+      alert('PDF içerik taraması sırasında hata oluştu: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setIsOcrScanning(false);
+      setOcrProgress(null);
+    }
+  };
+
   const handleFolderSelected = (path: string, files: LocalPdfFile[]) => {
     setFolderPath(path);
     setPdfFiles(files);
@@ -157,22 +210,38 @@ export default function App() {
   };
 
   /**
-   * Pre-loads realistic sample PDFs matching 9 students, leaving 1 student missing
-   * exactly demonstrating the test scenario described in the user prompt:
-   * (9 Hazır, 1 Eksik)
+   * Pre-loads realistic sample PDFs including both filename matches and generic scanned files
+   * (e.g. scan_001.pdf) to demonstrate OCR content matching.
    */
   const handleLoadSamplePdfs = () => {
+    if (students.length === 0) {
+      setStudents(SAMPLE_TEST_STUDENTS);
+      storageService.saveStudents(SAMPLE_TEST_STUDENTS);
+    }
+
     const sampleFiles: LocalPdfFile[] = [
       { name: 'Ahmet Yılmaz.pdf', size: 245000 },
       { name: 'Ayse_Demir.pdf', size: 312000 },
       { name: 'mehmet-kaya.pdf', size: 198000 },
-      { name: 'Zeynep Celik.pdf', size: 280000 },
-      { name: 'Can Öztürk - Haftalık.pdf', size: 260000 },
-      { name: 'Elif_Sahin.pdf', size: 305000 },
+      {
+        name: 'scan_001.pdf',
+        size: 280000,
+        extractedText: 'T.C. MİLLİ EĞİTİM BAKANLIĞI DENEME SINAV KARNESİ ÖĞRENCİ: ZEYNEP ÇELİK VELİ: FATMA ÇELİK NET: 78.50',
+      },
+      {
+        name: 'belge_2026_02.pdf',
+        size: 260000,
+        extractedText: 'HAFTALIK DEĞERLENDİRME RAPORU ÖĞRENCİ: CAN ÖZTÜRK VELİ: BURAK ÖZTÜRK BAŞARI: %88',
+      },
+      {
+        name: 'dokuman_003.pdf',
+        size: 305000,
+        extractedText: 'ÖĞRENCİ GELİŞİM RAPORU ELİF ŞAHİN KEMAL ŞAHİN ORTALAMA: 94.20',
+      },
       { name: 'burak-aydin.pdf', size: 220000 },
       { name: 'İrem Güneş.pdf', size: 290000 },
       { name: 'Emre_Koc.pdf', size: 240000 },
-      // "Defne Yıldız" intentionally omitted to simulate 1 missing PDF!
+      // "Defne Yıldız" intentionally omitted to simulate 1 missing PDF
     ];
 
     setFolderPath('/Users/batuhan/Desktop/Karneler/2026-10-02');
@@ -189,19 +258,28 @@ export default function App() {
     setIsConfirmOpen(true);
   };
 
-  const handleConfirmSend = async () => {
+  const handleConfirmSend = async (customExamName?: string) => {
     setIsSending(true);
     setIsCompleted(false);
     cancelSendingRef.current = false;
     setIsProgressOpen(true);
 
-    const itemsToSend = matchedItems.filter((i) => i.status === 'ready');
+    const targetItems = selectedGroup === 'all'
+      ? matchedItems
+      : matchedItems.filter((i) => (i.student.group || 'Genel') === selectedGroup);
+
+    const itemsToSend = targetItems.filter((i) => i.status === 'ready');
+    const examName = customExamName || config.examName || 'Genel Değerlendirme Sınavı';
 
     await executeSenderQueue({
       items: itemsToSend,
       template,
       provider: activeProvider,
       delayMs: (config.delaySeconds || 3) * 1000,
+      context: {
+        examName,
+        schoolName: config.schoolName,
+      },
       onProgress: (event) => {
         setProgressEvent(event);
       },
@@ -357,11 +435,21 @@ export default function App() {
               whatsAppStatus={whatsAppStatus}
               onStartBatchSend={handleStartBatchSend}
               onRetrySingleItem={handleRetrySingleItem}
+              onPreviewItem={(item) => {
+                setPreviewItem(item);
+                setIsPreviewOpen(true);
+              }}
               isSending={isSending}
               hasFolderSelected={Boolean(folderPath)}
               templates={templates}
               activeTemplateId={activeTemplateId}
               onSelectTemplate={handleSelectTemplate}
+              isOcrScanning={isOcrScanning}
+              ocrProgress={ocrProgress}
+              onStartOcrScan={handleStartOcrScan}
+              unassignedPdfCount={unassignedPdfCount}
+              selectedGroup={selectedGroup}
+              onSelectGroup={setSelectedGroup}
             />
           </div>
         )}
@@ -425,12 +513,18 @@ export default function App() {
         isOpen={isConfirmOpen}
         onClose={() => setIsConfirmOpen(false)}
         onConfirm={handleConfirmSend}
-        matchedItems={matchedItems}
+        matchedItems={
+          selectedGroup === 'all'
+            ? matchedItems
+            : matchedItems.filter((i) => (i.student.group || 'Genel') === selectedGroup)
+        }
         whatsAppStatus={whatsAppStatus}
         delaySeconds={config.delaySeconds || 3}
         templates={templates}
         activeTemplateId={activeTemplateId}
         onSelectTemplate={handleSelectTemplate}
+        initialExamName={config.examName}
+        selectedGroupName={selectedGroup}
       />
 
       <SendingProgressModal
@@ -443,6 +537,14 @@ export default function App() {
           setIsSending(false);
           setIsCompleted(true);
         }}
+      />
+
+      <PdfPreviewModal
+        isOpen={isPreviewOpen}
+        onClose={() => setIsPreviewOpen(false)}
+        currentItem={previewItem}
+        allItems={matchedItems}
+        onSelectIndex={(index) => setPreviewItem(matchedItems[index])}
       />
     </div>
   );

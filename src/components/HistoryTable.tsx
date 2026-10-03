@@ -1,6 +1,17 @@
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import { HistoryItem } from '../types/history';
-import { CheckCircle2, AlertCircle, Trash2, Calendar, FileText } from 'lucide-react';
+import {
+  CheckCircle2,
+  AlertCircle,
+  Trash2,
+  Calendar,
+  FileText,
+  Search,
+  Download,
+  Filter,
+  BarChart3,
+  TrendingUp,
+} from 'lucide-react';
 
 interface HistoryTableProps {
   history: HistoryItem[];
@@ -11,6 +22,9 @@ export const HistoryTable: React.FC<HistoryTableProps> = ({
   history,
   onClearHistory,
 }) => {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'success' | 'failed'>('all');
+
   const formatDate = (isoString: string) => {
     try {
       const date = new Date(isoString);
@@ -26,92 +40,272 @@ export const HistoryTable: React.FC<HistoryTableProps> = ({
     }
   };
 
+  // Stats calculation
+  const totalCount = history.length;
+  const successCount = history.filter((i) => i.status === 'success').length;
+  const failedCount = history.filter((i) => i.status === 'failed').length;
+  const successRate = totalCount > 0 ? Math.round((successCount / totalCount) * 100) : 0;
+
+  // Filtered items
+  const filteredHistory = useMemo(() => {
+    return history.filter((item) => {
+      const matchesSearch =
+        item.studentName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (item.parentName && item.parentName.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        item.pdfFileName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        item.maskedPhone.includes(searchTerm);
+
+      const matchesStatus =
+        statusFilter === 'all' ? true : item.status === statusFilter;
+
+      return matchesSearch && matchesStatus;
+    });
+  }, [history, searchTerm, statusFilter]);
+
+  // Export to CSV
+  const handleExportCsv = () => {
+    if (history.length === 0) return;
+
+    const headers = ['Tarih', 'Öğrenci Adı', 'Veli Adı', 'Telefon', 'PDF Dosyası', 'Durum', 'Hata Detayı'];
+    const rows = filteredHistory.map((item) => [
+      formatDate(item.date),
+      `"${item.studentName.replace(/"/g, '""')}"`,
+      `"${(item.parentName || '').replace(/"/g, '""')}"`,
+      `"${item.maskedPhone}"`,
+      `"${item.pdfFileName.replace(/"/g, '""')}"`,
+      item.status === 'success' ? 'Başarılı' : 'Başarısız',
+      `"${(item.errorMessage || '').replace(/"/g, '""')}"`,
+    ]);
+
+    const csvContent =
+      '\uFEFF' +
+      [headers.join(';'), ...rows.map((r) => r.join(';'))].join('\r\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `Gonderim_Gecmisi_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between bg-white p-4 border border-neutral-200 rounded">
-        <div>
-          <h2 className="text-sm font-semibold text-neutral-900">
-            Gönderim Geçmişi ({history.length})
-          </h2>
-          <p className="text-xs text-neutral-500 mt-0.5">
-            Daha önce WhatsApp üzerinden velilere gönderilen karne kayıtları.
-          </p>
+      {/* Top Stat Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="bg-white border border-neutral-200 rounded-lg p-3.5 shadow-2xs">
+          <span className="text-[11px] font-medium text-neutral-500 uppercase tracking-wider block">
+            Toplam Gönderim
+          </span>
+          <div className="flex items-baseline justify-between mt-1">
+            <span className="text-xl font-bold text-neutral-900 font-mono">
+              {totalCount}
+            </span>
+            <BarChart3 className="w-4 h-4 text-neutral-400" />
+          </div>
         </div>
 
-        {history.length > 0 && (
-          <button
-            onClick={() => {
-              if (window.confirm('Tüm gönderim geçmişini temizlemek istediğinizden emin misiniz?')) {
-                onClearHistory();
-              }
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-neutral-200 text-xs font-medium text-rose-600 hover:bg-rose-50 transition-colors"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span>Geçmişi Temizle</span>
-          </button>
-        )}
+        <div className="bg-white border border-neutral-200 rounded-lg p-3.5 shadow-2xs">
+          <span className="text-[11px] font-medium text-emerald-700 uppercase tracking-wider block">
+            Başarılı İletilen
+          </span>
+          <div className="flex items-baseline justify-between mt-1">
+            <span className="text-xl font-bold text-emerald-700 font-mono">
+              {successCount}
+            </span>
+            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+          </div>
+        </div>
+
+        <div className="bg-white border border-neutral-200 rounded-lg p-3.5 shadow-2xs">
+          <span className="text-[11px] font-medium text-rose-700 uppercase tracking-wider block">
+            Başarısız / Hatalı
+          </span>
+          <div className="flex items-baseline justify-between mt-1">
+            <span className="text-xl font-bold text-rose-700 font-mono">
+              {failedCount}
+            </span>
+            <AlertCircle className="w-4 h-4 text-rose-500" />
+          </div>
+        </div>
+
+        <div className="bg-white border border-neutral-200 rounded-lg p-3.5 shadow-2xs">
+          <span className="text-[11px] font-medium text-indigo-700 uppercase tracking-wider block">
+            Başarı Oranı
+          </span>
+          <div className="flex items-baseline justify-between mt-1">
+            <span className="text-xl font-bold text-indigo-700 font-mono">
+              %{successRate}
+            </span>
+            <TrendingUp className="w-4 h-4 text-indigo-500" />
+          </div>
+        </div>
       </div>
 
-      <div className="bg-white border border-neutral-200 rounded overflow-hidden">
+      {/* Toolbar: Search, Filters & Export */}
+      <div className="bg-white p-4 border border-neutral-200 rounded-lg shadow-2xs space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-neutral-900 flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-emerald-600" />
+              <span>Gönderim Kayıtları Günlüğü ({filteredHistory.length})</span>
+            </h2>
+            <p className="text-xs text-neutral-500 mt-0.5">
+              WhatsApp üzerinden velilere iletilen tüm karne ve mesajların geçmiş dökümü.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            {history.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleExportCsv}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-neutral-200 bg-white text-xs font-semibold text-neutral-700 hover:bg-neutral-50 transition-colors shadow-2xs cursor-pointer"
+                  title="Listeyi Excel uyumlu CSV olarak indir"
+                >
+                  <Download className="w-3.5 h-3.5 text-neutral-500" />
+                  <span>Excel CSV İndir</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm('Tüm gönderim geçmişini temizlemek istediğinizden emin misiniz? Bu işlem geri alınamaz.')) {
+                      onClearHistory();
+                    }
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-rose-200 text-xs font-semibold text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                  title="Geçmişi temizle"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Temizle</span>
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Filter controls */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-2 border-t border-neutral-100">
+          <div className="relative flex-1">
+            <Search className="w-3.5 h-3.5 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Öğrenci, veli, dosya adı veya telefon ile ara..."
+              className="w-full pl-8 pr-3 py-1.5 border border-neutral-300 rounded text-xs text-neutral-900 placeholder:text-neutral-400 focus:outline-hidden focus:ring-1 focus:ring-neutral-900 bg-white"
+            />
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="text-xs font-medium text-neutral-500 flex items-center gap-1">
+              <Filter className="w-3.5 h-3.5 text-neutral-400" />
+              <span>Durum:</span>
+            </span>
+            <div className="flex rounded-md border border-neutral-200 bg-neutral-100 p-0.5 text-xs font-medium">
+              <button
+                type="button"
+                onClick={() => setStatusFilter('all')}
+                className={`px-2.5 py-1 rounded transition-colors ${
+                  statusFilter === 'all'
+                    ? 'bg-white text-neutral-900 shadow-2xs font-semibold'
+                    : 'text-neutral-600 hover:text-neutral-900'
+                }`}
+              >
+                Tümü ({totalCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter('success')}
+                className={`px-2.5 py-1 rounded transition-colors ${
+                  statusFilter === 'success'
+                    ? 'bg-white text-emerald-800 shadow-2xs font-semibold'
+                    : 'text-neutral-600 hover:text-neutral-900'
+                }`}
+              >
+                Başarılı ({successCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter('failed')}
+                className={`px-2.5 py-1 rounded transition-colors ${
+                  statusFilter === 'failed'
+                    ? 'bg-white text-rose-800 shadow-2xs font-semibold'
+                    : 'text-neutral-600 hover:text-neutral-900'
+                }`}
+              >
+                Hatalı ({failedCount})
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="bg-white border border-neutral-200 rounded-lg overflow-hidden shadow-2xs">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
-              <tr className="bg-neutral-50 border-b border-neutral-200 text-neutral-500 font-medium">
-                <th className="py-2.5 px-4 font-semibold">Tarih</th>
-                <th className="py-2.5 px-4 font-semibold">Öğrenci</th>
-                <th className="py-2.5 px-4 font-semibold">Veli</th>
-                <th className="py-2.5 px-4 font-semibold">Telefon</th>
-                <th className="py-2.5 px-4 font-semibold">Gönderilen PDF</th>
-                <th className="py-2.5 px-4 font-semibold">Durum</th>
+              <tr className="bg-neutral-50 border-b border-neutral-200 text-neutral-600 font-medium">
+                <th className="py-2.5 px-4 font-semibold">Tarih / Saat</th>
+                <th className="py-2.5 px-4 font-semibold">Öğrenci Adı</th>
+                <th className="py-2.5 px-4 font-semibold">Veli Adı</th>
+                <th className="py-2.5 px-4 font-semibold">İletilen Telefon</th>
+                <th className="py-2.5 px-4 font-semibold">Karne PDF Dosyası</th>
+                <th className="py-2.5 px-4 font-semibold text-right">Gönderim Durumu</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-100 text-neutral-800">
-              {history.length === 0 ? (
+              {filteredHistory.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-8 text-center text-neutral-400">
-                    Henüz kayıtlı bir gönderim işlemi bulunmuyor.
+                  <td colSpan={6} className="py-12 text-center text-neutral-400">
+                    {history.length === 0
+                      ? 'Henüz kayıtlı bir gönderim işlemi bulunmuyor. Ana ekrandan gönderim yaptığınızda burada listelenecektir.'
+                      : 'Arama kriterlerinize uygun kayıt bulunamadı.'}
                   </td>
                 </tr>
               ) : (
-                history.map((item) => (
+                filteredHistory.map((item) => (
                   <tr key={item.id} className="hover:bg-neutral-50/70 transition-colors">
                     <td className="py-3 px-4 font-mono text-neutral-500 text-[11px] whitespace-nowrap">
                       {formatDate(item.date)}
                     </td>
-                    <td className="py-3 px-4 font-medium text-neutral-900">
+                    <td className="py-3 px-4 font-semibold text-neutral-900">
                       {item.studentName}
                     </td>
                     <td className="py-3 px-4 text-neutral-600">
-                      {item.parentName}
+                      {item.parentName || '-'}
                     </td>
-                    <td className="py-3 px-4 font-mono text-neutral-500">
+                    <td className="py-3 px-4 font-mono text-neutral-600">
                       {item.maskedPhone}
                     </td>
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-1.5 font-mono text-neutral-700 text-[11px]">
                         <FileText className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
-                        <span className="truncate max-w-[180px]">{item.pdfFileName}</span>
+                        <span className="truncate max-w-[200px]" title={item.pdfFileName}>
+                          {item.pdfFileName}
+                        </span>
                       </div>
                     </td>
-                    <td className="py-3 px-4">
+                    <td className="py-3 px-4 text-right">
                       {item.status === 'success' ? (
-                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 text-emerald-800 border border-emerald-200">
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
                           <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                          <span>Başarılı</span>
+                          <span>İletildi</span>
                         </span>
                       ) : (
-                        <div className="flex flex-col">
-                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-rose-50 text-rose-800 border border-rose-200 w-fit">
-                            <AlertCircle className="w-3 h-3 text-rose-600" />
-                            <span>Başarısız</span>
-                          </span>
-                          {item.errorMessage && (
-                            <span className="text-[10px] text-rose-600 mt-0.5">
-                              {item.errorMessage}
-                            </span>
-                          )}
-                        </div>
+                        <span
+                          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-rose-800 border border-rose-200"
+                          title={item.errorMessage || 'Gönderim başarısız oldu'}
+                        >
+                          <AlertCircle className="w-3 h-3 text-rose-600" />
+                          <span>Hata: {item.errorMessage || 'İletilemedi'}</span>
+                        </span>
                       )}
                     </td>
                   </tr>

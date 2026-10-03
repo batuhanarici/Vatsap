@@ -38,6 +38,8 @@ export function simplifyForComparison(text: string): string {
     .trim();
 }
 
+export const normalizeForMatching = simplifyForComparison;
+
 /**
  * Normalizes a Turkish or international phone number to standard 905XXXXXXXXX format
  */

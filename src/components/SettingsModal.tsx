@@ -18,8 +18,22 @@ import {
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
-  config: OpenWAConfig & { testPhone: string; delaySeconds: number };
-  onSaveConfig: (updated: Partial<OpenWAConfig & { testPhone: string; delaySeconds: number }>) => void;
+  config: OpenWAConfig & {
+    testPhone: string;
+    delaySeconds: number;
+    schoolName?: string;
+    examName?: string;
+  };
+  onSaveConfig: (
+    updated: Partial<
+      OpenWAConfig & {
+        testPhone: string;
+        delaySeconds: number;
+        schoolName?: string;
+        examName?: string;
+      }
+    >
+  ) => void;
   status: WhatsAppStatus;
   onCheckStatus: () => void;
   isChecking: boolean;
@@ -53,6 +67,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   // General fields
   const [delaySeconds, setDelaySeconds] = useState(config.delaySeconds || 3);
+  const [schoolName, setSchoolName] = useState(config.schoolName || 'Özel Başarı Okulları');
+  const [examName, setExamName] = useState(config.examName || 'Genel Değerlendirme Sınavı');
   const [showKey, setShowKey] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
 
@@ -66,6 +82,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setMetaToken(config.metaToken || '');
       setMetaPhoneNumberId(config.metaPhoneNumberId || '');
       setDelaySeconds(config.delaySeconds || 3);
+      setSchoolName(config.schoolName || 'Özel Başarı Okulları');
+      setExamName(config.examName || 'Genel Değerlendirme Sınavı');
     }
   }, [isOpen, config]);
 
@@ -86,6 +104,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       metaToken: metaToken.trim(),
       metaPhoneNumberId: metaPhoneNumberId.trim(),
       delaySeconds: Number(delaySeconds) || 3,
+      schoolName: schoolName.trim(),
+      examName: examName.trim(),
     });
     setSavedSuccess(true);
     setTimeout(() => setSavedSuccess(false), 2000);
@@ -425,6 +445,46 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               </div>
             )}
+
+            {/* Institution & Dynamic Variable Defaults */}
+            <div className="pt-3 border-t border-neutral-200 space-y-3">
+              <div>
+                <h3 className="text-xs font-semibold text-neutral-900 flex items-center gap-1.5">
+                  <Shield className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Kurum ve Şablon Varsayılanları</span>
+                </h3>
+                <p className="text-[11px] text-neutral-500 mt-0.5">
+                  Mesaj şablonlarındaki {'{okul_adi}'} ve {'{sinav_adi}'} değişkenlerinde varsayılan olarak kullanılır.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-neutral-700 mb-1">
+                    Okul / Kurum Adı ({'{okul_adi}'})
+                  </label>
+                  <input
+                    type="text"
+                    value={schoolName}
+                    onChange={(e) => setSchoolName(e.target.value)}
+                    placeholder="Örn: Özel Başarı Okulları"
+                    className="w-full px-3 py-2 border border-neutral-300 rounded text-xs text-neutral-900 focus:outline-hidden focus:ring-1 focus:ring-neutral-900 bg-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-neutral-700 mb-1">
+                    Varsayılan Sınav Başlığı ({'{sinav_adi}'})
+                  </label>
+                  <input
+                    type="text"
+                    value={examName}
+                    onChange={(e) => setExamName(e.target.value)}
+                    placeholder="Örn: 1. Dönem Değerlendirme Sınavı"
+                    className="w-full px-3 py-2 border border-neutral-300 rounded text-xs text-neutral-900 focus:outline-hidden focus:ring-1 focus:ring-neutral-900 bg-white"
+                  />
+                </div>
+              </div>
+            </div>
 
             {/* General Settings: Delay */}
             <div>

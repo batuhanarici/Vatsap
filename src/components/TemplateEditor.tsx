@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Student } from '../types/student';
 import { MessageTemplate } from '../types/template';
-import { formatMessage } from '../services/templateService';
+import { formatMessage, AVAILABLE_VARIABLES } from '../services/templateService';
 import {
   Check,
   Plus,
@@ -11,6 +11,8 @@ import {
   Star,
   RotateCcw,
   Sparkles,
+  Calendar,
+  Layers,
 } from 'lucide-react';
 
 interface TemplateEditorProps {
@@ -39,6 +41,8 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
   const [title, setTitle] = useState(currentTemplate?.title || '');
   const [tag, setTag] = useState(currentTemplate?.tag || '');
   const [content, setContent] = useState(currentTemplate?.content || '');
+  const [examName, setExamName] = useState('1. Dönem Genel Değerlendirme Sınavı');
+  const [schoolName, setSchoolName] = useState('Özel Başarı Okulları');
   const [isSaved, setIsSaved] = useState(false);
 
   // Sync state when active template changes
@@ -115,7 +119,10 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
     setContent((prev) => prev + variable);
   };
 
-  const preview = formatMessage(content, sampleStudent);
+  const preview = formatMessage(content, sampleStudent, {
+    examName,
+    schoolName,
+  });
 
   const getTagColor = (t: string) => {
     switch (t?.toLowerCase()) {
@@ -290,24 +297,32 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
 
           {/* Variable Insertion */}
           <div>
-            <span className="text-[11px] font-medium text-neutral-500 block mb-1.5">
-              Mesaja Otomatik Eklenebilir Değişkenler:
-            </span>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => handleInsert('{veli_adi}')}
-                className="px-2.5 py-1 bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 text-neutral-800 rounded font-mono text-xs transition-colors cursor-pointer"
-              >
-                + {'{veli_adi}'}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleInsert('{ogrenci_adi}')}
-                className="px-2.5 py-1 bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 text-neutral-800 rounded font-mono text-xs transition-colors cursor-pointer"
-              >
-                + {'{ogrenci_adi}'}
-              </button>
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[11px] font-semibold text-neutral-700 flex items-center gap-1">
+                <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Mesaja Eklenebilir Dinamik Değişkenler:</span>
+              </span>
+              <span className="text-[10px] text-neutral-400">
+                (Tıklayarak metne ekleyin)
+              </span>
+            </div>
+
+            <div className="flex flex-wrap gap-1.5">
+              {AVAILABLE_VARIABLES.map((v) => (
+                <button
+                  key={v.tag}
+                  type="button"
+                  onClick={() => handleInsert(v.tag)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 bg-neutral-100 hover:bg-indigo-50 hover:text-indigo-900 border border-neutral-200 hover:border-indigo-300 text-neutral-800 rounded font-mono text-xs transition-all cursor-pointer group shadow-2xs active:scale-95"
+                  title={`${v.label}: ${v.description} (Örnek: ${v.example})`}
+                >
+                  <span className="text-emerald-600 font-bold group-hover:text-indigo-600">+</span>
+                  <span className="font-semibold">{v.tag}</span>
+                  <span className="text-[10px] text-neutral-400 group-hover:text-indigo-700 font-sans">
+                    ({v.label})
+                  </span>
+                </button>
+              ))}
             </div>
           </div>
 
@@ -354,7 +369,7 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
                 Canlı WhatsApp Önizlemesi
               </h3>
               <p className="text-xs text-neutral-500 mt-0.5">
-                Örnek öğrenci ({sampleStudent.studentName} / {sampleStudent.parentName}) için görünüm:
+                Tüm değişkenler otomatik olarak çözümlenir:
               </p>
             </div>
             <span
@@ -366,21 +381,54 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
             </span>
           </div>
 
+          {/* Dynamic parameter test inputs */}
+          <div className="p-3 bg-neutral-50 border border-neutral-200 rounded-lg space-y-2 text-xs">
+            <span className="font-semibold text-neutral-700 block text-[11px] uppercase tracking-wider">
+              Önizleme Değişken Değerleri:
+            </span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] text-neutral-500 block mb-0.5 font-mono">
+                  {'{sinav_adi}'} Sınav Adı:
+                </label>
+                <input
+                  type="text"
+                  value={examName}
+                  onChange={(e) => setExamName(e.target.value)}
+                  placeholder="Sınav adı..."
+                  className="w-full px-2.5 py-1 bg-white border border-neutral-300 rounded text-xs text-neutral-900 focus:outline-hidden focus:ring-1 focus:ring-neutral-900"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-neutral-500 block mb-0.5 font-mono">
+                  {'{okul_adi}'} Okul / Kurum:
+                </label>
+                <input
+                  type="text"
+                  value={schoolName}
+                  onChange={(e) => setSchoolName(e.target.value)}
+                  placeholder="Okul adı..."
+                  className="w-full px-2.5 py-1 bg-white border border-neutral-300 rounded text-xs text-neutral-900 focus:outline-hidden focus:ring-1 focus:ring-neutral-900"
+                />
+              </div>
+            </div>
+          </div>
+
           {/* WhatsApp Chat Bubble Mockup */}
-          <div className="p-4 bg-emerald-50/30 border border-neutral-200 rounded-lg flex flex-col justify-end min-h-[240px]">
-            <div className="max-w-[88%] self-end bg-white border border-neutral-200 rounded-lg p-3.5 shadow-xs space-y-2">
-              <p className="text-xs text-neutral-800 whitespace-pre-wrap leading-relaxed">
+          <div className="p-4 bg-emerald-50/40 border border-neutral-200 rounded-lg flex flex-col justify-end min-h-[220px]">
+            <div className="max-w-[92%] self-end bg-white border border-neutral-200 rounded-lg p-3.5 shadow-xs space-y-2">
+              <p className="text-xs text-neutral-800 whitespace-pre-wrap leading-relaxed font-sans">
                 {preview}
               </p>
               <div className="flex items-center justify-between pt-1.5 border-t border-neutral-100 text-[10px] text-neutral-400">
-                <span className="font-mono text-neutral-500">📎 {sampleStudent.studentName}_Karne.pdf</span>
-                <span>12:00 ✓✓</span>
+                <span className="font-mono text-neutral-600">📎 {sampleStudent.studentName}_Karne.pdf</span>
+                <span>{new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })} ✓✓</span>
               </div>
             </div>
           </div>
 
           <div className="text-[11px] text-neutral-600 bg-neutral-50 p-3 rounded border border-neutral-200 leading-relaxed">
-            💡 <strong>İpucu:</strong> Oluşturduğunuz tüm şablonlar kaydedilir. Karne gönderme ekranına geçtiğinizde üstteki şablon seçiciden istediğiniz şablonu tek tıkla aktif edip hemen o metinle gönderim yapabilirsiniz.
+            💡 <strong>İpucu:</strong> Gönderim sırasında <code>{'{tarih}'}</code> ve <code>{'{gun}'}</code> değişkenleri o günün güncel tarihiyle, <code>{'{sinav_adi}'}</code> ise belirttiğiniz sınav başlığıyla velilere otomatik iletilir.
           </div>
         </div>
       </div>

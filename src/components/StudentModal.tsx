@@ -19,6 +19,7 @@ export const StudentModal: React.FC<StudentModalProps> = ({
   const [studentName, setStudentName] = useState('');
   const [parentName, setParentName] = useState('');
   const [phone, setPhone] = useState('');
+  const [group, setGroup] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -26,10 +27,12 @@ export const StudentModal: React.FC<StudentModalProps> = ({
       setStudentName(studentToEdit.studentName);
       setParentName(studentToEdit.parentName);
       setPhone(studentToEdit.phone);
+      setGroup(studentToEdit.group || '');
     } else {
       setStudentName('');
       setParentName('');
       setPhone('');
+      setGroup('');
     }
     setError(null);
   }, [studentToEdit, isOpen]);
@@ -43,6 +46,7 @@ export const StudentModal: React.FC<StudentModalProps> = ({
     const cleanName = studentName.trim();
     const cleanParent = parentName.trim();
     const cleanPhone = normalizePhoneNumber(phone);
+    const cleanGroup = group.trim() || 'Genel';
 
     if (!cleanName) {
       setError('Lütfen öğrenci adını girin.');
@@ -61,6 +65,7 @@ export const StudentModal: React.FC<StudentModalProps> = ({
       studentName: cleanName,
       parentName: cleanParent,
       phone: cleanPhone,
+      group: cleanGroup,
     });
     onClose();
   };
@@ -99,6 +104,37 @@ export const StudentModal: React.FC<StudentModalProps> = ({
               placeholder="Örn: Ahmet Yılmaz"
               className="w-full px-3 py-2 border border-neutral-300 rounded text-xs text-neutral-900 focus:outline-hidden focus:ring-1 focus:ring-neutral-900"
             />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-medium text-neutral-700">
+                Sınıf / Şube / Grup
+              </label>
+              <span className="text-[10px] text-neutral-400">
+                (İsteğe bağlı, örn: 8-A)
+              </span>
+            </div>
+            <input
+              type="text"
+              value={group}
+              onChange={(e) => setGroup(e.target.value)}
+              placeholder="Örn: 8-A veya 12-Sayısal"
+              className="w-full px-3 py-2 border border-neutral-300 rounded text-xs text-neutral-900 focus:outline-hidden focus:ring-1 focus:ring-neutral-900"
+            />
+            <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+              <span className="text-[10px] text-neutral-400">Hızlı seçim:</span>
+              {['8-A', '8-B', '12-Sayısal', '12-EA', 'Hafta Sonu Grubu'].map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setGroup(s)}
+                  className="px-2 py-0.5 rounded text-[10px] font-medium bg-neutral-100 hover:bg-neutral-200 text-neutral-700 border border-neutral-200 cursor-pointer transition-colors"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div>

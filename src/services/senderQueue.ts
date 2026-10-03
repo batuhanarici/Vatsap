@@ -1,6 +1,6 @@
 import { MatchedItem } from '../types/pdf';
 import { WhatsAppProvider } from './whatsapp/types';
-import { formatMessage } from './templateService';
+import { formatMessage, TemplateContext } from './templateService';
 import { fileToBase64 } from './pdfMatcher';
 import { storageService } from './storageService';
 import { maskPhoneNumber } from './normalizer';
@@ -19,6 +19,7 @@ export interface QueueOptions {
   template: string;
   provider: WhatsAppProvider;
   delayMs?: number; // default 3000ms
+  context?: TemplateContext;
   onProgress: (event: QueueProgressEvent) => void;
   onItemUpdated: (updatedItem: MatchedItem) => void;
   isCancelled?: () => boolean;
@@ -34,6 +35,7 @@ export async function executeSenderQueue(options: QueueOptions): Promise<{
     template,
     provider,
     delayMs = 3000,
+    context,
     onProgress,
     onItemUpdated,
     isCancelled = () => false
@@ -71,7 +73,7 @@ export async function executeSenderQueue(options: QueueOptions): Promise<{
       failedCount
     });
 
-    const messageText = formatMessage(template, student);
+    const messageText = formatMessage(template, student, context);
     const textResult = await provider.sendMessage(student.phone, messageText);
 
     if (!textResult.success) {
@@ -85,10 +87,12 @@ export async function executeSenderQueue(options: QueueOptions): Promise<{
         studentName: student.studentName,
         parentName: student.parentName,
         maskedPhone: maskPhoneNumber(student.phone),
+        phone: student.phone,
         pdfFileName: pdfFile.name,
         date: new Date().toISOString(),
         status: 'failed',
-        errorMessage: currentItem.errorMessage
+        errorMessage: currentItem.errorMessage,
+        examName: context?.examName,
       });
 
       continue;
@@ -139,10 +143,12 @@ export async function executeSenderQueue(options: QueueOptions): Promise<{
         studentName: student.studentName,
         parentName: student.parentName,
         maskedPhone: maskPhoneNumber(student.phone),
+        phone: student.phone,
         pdfFileName: pdfFile.name,
         date: new Date().toISOString(),
         status: 'failed',
-        errorMessage: currentItem.errorMessage
+        errorMessage: currentItem.errorMessage,
+        examName: context?.examName,
       });
       continue;
     }
@@ -158,9 +164,11 @@ export async function executeSenderQueue(options: QueueOptions): Promise<{
       studentName: student.studentName,
       parentName: student.parentName,
       maskedPhone: maskPhoneNumber(student.phone),
+      phone: student.phone,
       pdfFileName: pdfFile.name,
       date: new Date().toISOString(),
-      status: 'success'
+      status: 'success',
+      examName: context?.examName,
     });
 
     // 3. Humanized Delay between students (except for the last one)

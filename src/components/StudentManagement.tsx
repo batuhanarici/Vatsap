@@ -93,10 +93,12 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
           const studentKey = findKey(['öğrenci', 'ogrenci', 'öğrenci adı', 'ad soyad', 'isim']);
           const parentKey = findKey(['veli', 'veli adı', 'veli ad']);
           const phoneKey = findKey(['telefon', 'tel', 'whatsapp', 'cep', 'gsm', 'phone']);
+          const groupKey = findKey(['sınıf', 'sinif', 'şube', 'sube', 'grup', 'group', 'class', 'alan']);
 
           const studentName = studentKey ? String(row[studentKey] || '').trim() : '';
           const parentName = parentKey ? String(row[parentKey] || '').trim() : '';
           const rawPhone = phoneKey ? String(row[phoneKey] || '').trim() : '';
+          const groupName = groupKey ? String(row[groupKey] || '').trim() : '';
 
           if (studentName) {
             newStudents.push({
@@ -104,6 +106,7 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
               studentName,
               parentName: parentName || 'Sayın Velimiz',
               phone: normalizePhoneNumber(rawPhone),
+              group: groupName || 'Genel',
             });
           }
         });
@@ -114,7 +117,7 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
           } else {
             newStudents.forEach((st) => onAddStudent(st));
           }
-          alert(`${newStudents.length} öğrenci Excel dosyasından başarıyla eklendi!`);
+          alert(`${newStudents.length} öğrenci Excel dosyasından sınıflarıyla birlikte başarıyla eklendi!`);
         } else {
           alert('Excel dosyasında "Öğrenci Adı", "Veli Adı", "Telefon" sütunları tespit edilemedi.');
         }
@@ -131,16 +134,19 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
   const handleDownloadSampleExcel = () => {
     const sampleData = [
       {
+        'Sınıf / Şube': '8-A',
         'Öğrenci Adı': 'Ali Yılmaz',
         'Veli Adı': 'Mehmet Yılmaz',
         'WhatsApp Telefon': '0532 111 22 33',
       },
       {
+        'Sınıf / Şube': '8-B',
         'Öğrenci Adı': 'Ayşe Demir',
         'Veli Adı': 'Fatma Demir',
         'WhatsApp Telefon': '0533 222 33 44',
       },
       {
+        'Sınıf / Şube': '12-Sayısal',
         'Öğrenci Adı': 'Can Öztürk',
         'Veli Adı': 'Kemal Öztürk',
         'WhatsApp Telefon': '0535 333 44 55',
@@ -203,12 +209,27 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
     }
   };
 
-  const filteredStudents = students.filter(
-    (s) =>
+  const [selectedGroupFilter, setSelectedGroupFilter] = useState<string>('all');
+
+  // Extract unique groups
+  const availableGroups = Array.from(
+    new Set(students.map((s) => s.group || 'Genel'))
+  ).sort();
+
+  const filteredStudents = students.filter((s) => {
+    const matchesSearch =
       s.studentName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       s.parentName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      s.phone.includes(searchTerm)
-  );
+      s.phone.includes(searchTerm) ||
+      (s.group && s.group.toLowerCase().includes(searchTerm.toLowerCase()));
+
+    const matchesGroup =
+      selectedGroupFilter === 'all'
+        ? true
+        : (s.group || 'Genel') === selectedGroupFilter;
+
+    return matchesSearch && matchesGroup;
+  });
 
   return (
     <div className="space-y-4">
@@ -333,18 +354,60 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
         </div>
       </div>
 
-      {/* Filter / Search input */}
-      {students.length > 5 && (
-        <div className="flex items-center gap-2">
+      {/* Filter / Search & Group Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 border border-neutral-200 rounded-lg shadow-2xs">
+        <div className="flex items-center gap-1.5 flex-wrap flex-1">
+          <span className="text-xs font-semibold text-neutral-600 flex items-center gap-1 mr-1">
+            🏷️ Sınıf / Şube:
+          </span>
+          <button
+            type="button"
+            onClick={() => setSelectedGroupFilter('all')}
+            className={`px-2.5 py-1 rounded text-xs transition-colors cursor-pointer ${
+              selectedGroupFilter === 'all'
+                ? 'bg-neutral-900 text-white font-semibold shadow-2xs'
+                : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200 border border-neutral-200'
+            }`}
+          >
+            Tüm Sınıflar ({students.length})
+          </button>
+          {availableGroups.map((g) => {
+            const count = students.filter((s) => (s.group || 'Genel') === g).length;
+            const isSelected = selectedGroupFilter === g;
+            return (
+              <button
+                key={g}
+                type="button"
+                onClick={() => setSelectedGroupFilter(g)}
+                className={`px-2.5 py-1 rounded text-xs transition-colors cursor-pointer flex items-center gap-1.5 ${
+                  isSelected
+                    ? 'bg-indigo-600 text-white font-semibold shadow-2xs'
+                    : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200 border border-neutral-200'
+                }`}
+              >
+                <span>{g}</span>
+                <span
+                  className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                    isSelected ? 'bg-indigo-700 text-white' : 'bg-neutral-200 text-neutral-700'
+                  }`}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="w-full sm:w-64">
           <input
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Öğrenci adı, veli veya telefon ile ara..."
-            className="w-full sm:w-72 px-3 py-1.5 bg-white border border-neutral-300 rounded text-xs text-neutral-900 focus:outline-hidden focus:ring-1 focus:ring-neutral-900"
+            placeholder="İsim, veli veya tel ara..."
+            className="w-full px-3 py-1.5 bg-white border border-neutral-300 rounded text-xs text-neutral-900 focus:outline-hidden focus:ring-1 focus:ring-neutral-900"
           />
         </div>
-      )}
+      </div>
 
       {/* Students Table */}
       <div className="bg-white border border-neutral-200 rounded-lg overflow-hidden shadow-2xs">
@@ -354,6 +417,7 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
               <tr className="bg-neutral-50 border-b border-neutral-200 text-neutral-500 font-medium">
                 <th className="py-2.5 px-4 font-semibold w-12">#</th>
                 <th className="py-2.5 px-4 font-semibold">Öğrenci Adı Soyadı</th>
+                <th className="py-2.5 px-4 font-semibold">Sınıf / Şube</th>
                 <th className="py-2.5 px-4 font-semibold">Veli Adı Soyadı</th>
                 <th className="py-2.5 px-4 font-semibold">WhatsApp Numarası</th>
                 <th className="py-2.5 px-4 font-semibold text-right">İşlemler</th>
@@ -362,11 +426,11 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
             <tbody className="divide-y divide-neutral-100 text-neutral-800">
               {filteredStudents.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-12 text-center text-neutral-400">
+                  <td colSpan={6} className="py-12 text-center text-neutral-400">
                     <div className="max-w-xs mx-auto space-y-2">
-                      <p className="font-medium text-neutral-600">Henüz kayıtlı öğrenci bulunmuyor.</p>
+                      <p className="font-medium text-neutral-600">Bu sınıfta kayıtlı öğrenci bulunamadı.</p>
                       <p className="text-[11px] text-neutral-400">
-                        Yukarıdaki <strong>&quot;Excel / CSV Yükle&quot;</strong> butonuna basarak sınıf listenizi tek seferde yükleyebilir veya <strong>&quot;Öğrenci Ekle&quot;</strong> butonuyla tek tek ekleyebilirsiniz.
+                        Arama filtrenizi temizleyebilir veya yeni öğrenci ekleyebilirsiniz.
                       </p>
                     </div>
                   </td>
@@ -379,6 +443,11 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
                     </td>
                     <td className="py-3 px-4 font-semibold text-neutral-900">
                       {student.studentName}
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 font-mono">
+                        {student.group || 'Genel'}
+                      </span>
                     </td>
                     <td className="py-3 px-4 text-neutral-600">
                       {student.parentName}

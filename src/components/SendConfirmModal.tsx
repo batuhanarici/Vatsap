@@ -8,13 +8,15 @@ import { X, Send, AlertTriangle, CheckCircle2, MessageSquare, Tag } from 'lucide
 interface SendConfirmModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: () => void;
+  onConfirm: (examName: string) => void;
   matchedItems: MatchedItem[];
   whatsAppStatus: WhatsAppStatus;
   delaySeconds: number;
   templates: MessageTemplate[];
   activeTemplateId: string;
   onSelectTemplate: (id: string) => void;
+  initialExamName?: string;
+  selectedGroupName?: string;
 }
 
 export const SendConfirmModal: React.FC<SendConfirmModalProps> = ({
@@ -27,12 +29,18 @@ export const SendConfirmModal: React.FC<SendConfirmModalProps> = ({
   templates,
   activeTemplateId,
   onSelectTemplate,
+  initialExamName = 'Genel Deneme Sınavı',
+  selectedGroupName = 'all',
 }) => {
+  const [examName, setExamName] = React.useState(initialExamName);
+
   if (!isOpen) return null;
 
   const readyItems = matchedItems.filter((i) => i.status === 'ready');
   const missingItems = matchedItems.filter((i) => i.status === 'missing_pdf');
   const invalidItems = matchedItems.filter((i) => i.status === 'invalid_phone');
+
+  const isClassFiltered = selectedGroupName && selectedGroupName !== 'all';
 
   const selectedTemplate =
     templates.find((t) => t.id === activeTemplateId) || templates[0];
@@ -47,16 +55,23 @@ export const SendConfirmModal: React.FC<SendConfirmModalProps> = ({
     phone: '905321112233',
   };
   const previewText = selectedTemplate
-    ? formatMessage(selectedTemplate.content, previewStudent)
+    ? formatMessage(selectedTemplate.content, previewStudent, { examName })
     : '';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
       <div className="bg-white border border-neutral-200 rounded-lg shadow-xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150">
         <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-200 bg-neutral-50/50">
-          <h2 className="text-sm font-semibold text-neutral-900">
-            Toplu Gönderim Öncesi Onay
-          </h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-neutral-900">
+              {isClassFiltered ? `${selectedGroupName} Sınıfı Gönderim Onayı` : 'Toplu Gönderim Öncesi Onay'}
+            </h2>
+            {isClassFiltered && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-100 text-indigo-800 border border-indigo-200">
+                Sınıf: {selectedGroupName}
+              </span>
+            )}
+          </div>
           <button
             onClick={onClose}
             className="p-1 rounded text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition-colors"
@@ -92,9 +107,28 @@ export const SendConfirmModal: React.FC<SendConfirmModalProps> = ({
               ))}
             </select>
 
+            {/* Sınav Adı Girişi */}
+            <div>
+              <label className="text-[11px] font-semibold text-neutral-700 block mb-1">
+                Sınav / Karne Başlığı ({'{sinav_adi}'}):
+              </label>
+              <input
+                type="text"
+                value={examName}
+                onChange={(e) => setExamName(e.target.value)}
+                placeholder="Örn: LGS 3. Deneme Sınavı veya 1. Dönem 1. Yazılı"
+                className="w-full px-3 py-1.5 border border-neutral-300 rounded text-xs font-medium text-neutral-900 bg-white focus:outline-hidden focus:ring-1 focus:ring-neutral-900"
+              />
+            </div>
+
             {/* Template preview snippet */}
-            <div className="mt-2 p-2.5 bg-white border border-neutral-200 rounded text-[11px] text-neutral-700 whitespace-pre-wrap max-h-24 overflow-y-auto leading-relaxed font-sans">
-              {previewText}
+            <div>
+              <span className="text-[10px] text-neutral-500 font-medium block mb-1">
+                Mesaj Önizlemesi ({'{tarih}'} ve {'{gun}'} otomatik eklendi):
+              </span>
+              <div className="p-2.5 bg-white border border-neutral-200 rounded text-[11px] text-neutral-700 whitespace-pre-wrap max-h-24 overflow-y-auto leading-relaxed font-sans">
+                {previewText}
+              </div>
             </div>
           </div>
 
@@ -145,7 +179,7 @@ export const SendConfirmModal: React.FC<SendConfirmModalProps> = ({
             <button
               onClick={() => {
                 onClose();
-                onConfirm();
+                onConfirm(examName);
               }}
               className="flex items-center gap-1.5 px-5 py-2 rounded bg-neutral-900 text-white text-xs font-semibold hover:bg-neutral-800 transition-colors shadow-xs cursor-pointer"
             >

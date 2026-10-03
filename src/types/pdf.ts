@@ -7,6 +7,7 @@ export interface LocalPdfFile {
   path?: string;
   file?: File;
   base64?: string;
+  extractedText?: string;
 }
 
 export type MatchingStatus = 'ready' | 'missing_pdf' | 'invalid_phone';
@@ -19,6 +20,8 @@ export type SendingStatus =
   | 'success' 
   | 'failed';
 
+export type MatchingMethod = 'filename' | 'content_ocr' | 'manual';
+
 export interface MatchedItem {
   id: string;
   student: Student;
@@ -26,4 +29,5 @@ export interface MatchedItem {
   status: MatchingStatus;
   sendingStatus: SendingStatus;
   errorMessage?: string;
+  matchMethod?: MatchingMethod;
 }

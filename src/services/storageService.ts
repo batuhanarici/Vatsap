@@ -14,11 +14,13 @@ export const DEFAULT_TEMPLATES: MessageTemplate[] = [
     id: 'tmpl_haftalik',
     title: 'Haftalık Sınav Karnesi',
     tag: 'Haftalık',
-    content: `Merhaba {veli_adi},
+    content: `Sayın {veli_adi},
 
-{ogrenci_adi} öğrencimizin bu haftaki sınav karnesi ekte yer almaktadır.
+Öğrencimiz {ogrenci_adi}'nin {tarih} {gun} günü yapılan {sinav_adi} karnesi ekte bilgilerinize sunulmuştur.
 
-Bilginize sunar, başarılar dileriz.`,
+Öğrencimizin haftalık başarı grafiğini ve ders netlerini belgeden inceleyebilirsiniz.
+
+İyi günler dileriz.`,
     isDefault: true,
   },
   {
@@ -27,9 +29,9 @@ Bilginize sunar, başarılar dileriz.`,
     tag: 'Deneme',
     content: `Sayın {veli_adi},
 
-Öğrencimiz {ogrenci_adi}'nin en son yapılan deneme sınavı ayrıntılı karnesi ekte paylaşılmıştır. Netleri ve sıralamaları inceleyebilirsiniz.
+Öğrencimiz {ogrenci_adi}'nin {tarih} tarihinde gerçekleştirilen {sinav_adi} sonuç karnesi ekte paylaşılmıştır. Net dağılımı ve genel sıralamasını inceleyebilirsiniz.
 
-İyi günler dileriz.`,
+Başarılar dileriz.`,
   },
   {
     id: 'tmpl_donem_sonu',
@@ -45,13 +47,18 @@ Bilginize sunar, başarılar dileriz.`,
     tag: 'Takip',
     content: `Merhaba {veli_adi},
 
-{ogrenci_adi} öğrencimizin bu haftaki ders ve ödev takip karnesi ekte yer almaktadır. Eksik kazanımları karne üzerinden takip edebilirsiniz.`,
+{ogrenci_adi} öğrencimizin {tarih} {gun} tarihli haftalık ders ve ödev takip karnesi ekte yer almaktadır. Eksik kazanımları karne üzerinden takip edebilirsiniz.`,
   },
 ];
 
 export const DEFAULT_TEMPLATE = DEFAULT_TEMPLATES[0].content;
 
-export const DEFAULT_CONFIG: OpenWAConfig & { testPhone: string; delaySeconds: number } = {
+export const DEFAULT_CONFIG: OpenWAConfig & {
+  testPhone: string;
+  delaySeconds: number;
+  examName: string;
+  schoolName: string;
+} = {
   providerType: 'whatsapp_web',
   baseUrl: 'http://localhost:2785/api',
   apiKey: '',
@@ -60,22 +67,24 @@ export const DEFAULT_CONFIG: OpenWAConfig & { testPhone: string; delaySeconds: n
   metaToken: '',
   metaPhoneNumberId: '',
   testPhone: '',
-  delaySeconds: 3
+  delaySeconds: 3,
+  examName: 'Genel Değerlendirme ve Deneme Sınavı',
+  schoolName: 'Özel Başarı Okulları',
 };
 
 export const INITIAL_STUDENTS: Student[] = [];
 
 export const SAMPLE_TEST_STUDENTS: Student[] = [
-  { id: '1', studentName: 'Ahmet Yılmaz', parentName: 'Mehmet Yılmaz', phone: '905321112233' },
-  { id: '2', studentName: 'Ayşe Demir', parentName: 'Ali Demir', phone: '905332223344' },
-  { id: '3', studentName: 'Mehmet Kaya', parentName: 'Hasan Kaya', phone: '905353334455' },
-  { id: '4', studentName: 'Zeynep Çelik', parentName: 'Fatma Çelik', phone: '905364445566' },
-  { id: '5', studentName: 'Can Öztürk', parentName: 'Burak Öztürk', phone: '905375556677' },
-  { id: '6', studentName: 'Elif Şahin', parentName: 'Kemal Şahin', phone: '905386667788' },
-  { id: '7', studentName: 'Burak Aydın', parentName: 'Selin Aydın', phone: '905397778899' },
-  { id: '8', studentName: 'İrem Güneş', parentName: 'Murat Güneş', phone: '905418889900' },
-  { id: '9', studentName: 'Emre Koç', parentName: 'Derya Koç', phone: '905429990011' },
-  { id: '10', studentName: 'Defne Yıldız', parentName: 'Okan Yıldız', phone: '905431110022' },
+  { id: '1', studentName: 'Ahmet Yılmaz', parentName: 'Mehmet Yılmaz', phone: '905321112233', group: '8-A' },
+  { id: '2', studentName: 'Ayşe Demir', parentName: 'Ali Demir', phone: '905332223344', group: '8-A' },
+  { id: '3', studentName: 'Mehmet Kaya', parentName: 'Hasan Kaya', phone: '905353334455', group: '8-A' },
+  { id: '4', studentName: 'Zeynep Çelik', parentName: 'Fatma Çelik', phone: '905364445566', group: '8-B' },
+  { id: '5', studentName: 'Can Öztürk', parentName: 'Burak Öztürk', phone: '905375556677', group: '8-B' },
+  { id: '6', studentName: 'Elif Şahin', parentName: 'Kemal Şahin', phone: '905386667788', group: '12-Sayısal' },
+  { id: '7', studentName: 'Burak Aydın', parentName: 'Selin Aydın', phone: '905397778899', group: '12-Sayısal' },
+  { id: '8', studentName: 'İrem Güneş', parentName: 'Murat Güneş', phone: '905418889900', group: '12-EA' },
+  { id: '9', studentName: 'Emre Koç', parentName: 'Derya Koç', phone: '905429990011', group: 'Hafta Sonu Grubu' },
+  { id: '10', studentName: 'Defne Yıldız', parentName: 'Okan Yıldız', phone: '905431110022', group: 'Hafta Sonu Grubu' },
 ];
 
 export const storageService = {
