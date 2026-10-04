@@ -17,6 +17,7 @@ import { SendConfirmModal } from './components/SendConfirmModal';
 import { SendingProgressModal } from './components/SendingProgressModal';
 import { PdfPreviewModal } from './components/PdfPreviewModal';
 import { ScheduleBanner } from './components/ScheduleBanner';
+import { ToastNotification, ToastMessage } from './components/ToastNotification';
 
 import { Student, StudentFormData } from './types/student';
 import { LocalPdfFile, MatchedItem } from './types/pdf';
@@ -32,6 +33,7 @@ import { OpenWAProvider } from './services/whatsapp/OpenWAProvider';
 import { MockWhatsAppProvider } from './services/whatsapp/MockProvider';
 import { WhatsAppWebProvider } from './services/whatsapp/WhatsAppWebProvider';
 import { MetaCloudProvider } from './services/whatsapp/MetaCloudProvider';
+import { WhatsAppProvider } from './services/whatsapp/types';
 import { executeSenderQueue, QueueProgressEvent } from './services/senderQueue';
 
 export default function App() {
@@ -106,6 +108,21 @@ export default function App() {
   const [isCheckingStatus, setIsCheckingStatus] = useState<boolean>(false);
   const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null);
 
+  // App-wide Toast Notifications
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  const addToast = (toast: Omit<ToastMessage, 'id'> & { id?: string }) => {
+    const id = toast.id || `toast_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    setToasts((prev) => {
+      const filtered = prev.filter((t) => t.id !== id);
+      return [...filtered, { ...toast, id }];
+    });
+  };
+
+  const removeToast = (id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  };
+
   // Modals
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isTestModalOpen, setIsTestModalOpen] = useState<boolean>(false);
@@ -136,9 +153,18 @@ export default function App() {
     });
   }, [students, pdfFiles, itemOverrides]);
 
-  // 2. WhatsApp Status Check
-  const checkStatus = async () => {
+  // 2. WhatsApp Status Check with interactive notification support
+  const checkStatus = async (interactive: boolean = false): Promise<WhatsAppStatus> => {
     setIsCheckingStatus(true);
+    if (interactive) {
+      addToast({
+        id: 'status_check',
+        type: 'loading',
+        title: 'Durum Kontrol Ediliyor',
+        message: 'WhatsApp sunucusuna erişim test ediliyor...',
+      });
+    }
+
     try {
       const st = await activeProvider.getStatus();
       setWhatsAppStatus(st);
@@ -148,12 +174,56 @@ export default function App() {
       } else {
         setQrCodeUrl(null);
       }
-    } catch {
-      setWhatsAppStatus({
+
+      if (interactive) {
+        if (st.state === 'connected') {
+          addToast({
+            id: 'status_check',
+            type: 'success',
+            title: 'İşleminiz Başarılı',
+            message: `WhatsApp bağlantısı aktif ve hazır. (${st.phoneConnected || 'Bağlı'})`,
+          });
+        } else if (st.state === 'qr_ready') {
+          addToast({
+            id: 'status_check',
+            type: 'warning',
+            title: 'İşlem Başarılı: QR Kod Hazır',
+            message: 'Oturum oluşturuldu. Lütfen Ayarlar penceresinden QR kodu telefonunuzdaki WhatsApp ile taratın.',
+          });
+        } else if (st.state === 'starting' || st.state === 'authenticating') {
+          addToast({
+            id: 'status_check',
+            type: 'info',
+            title: 'WhatsApp Başlatılıyor',
+            message: st.details || 'Oturum doğrulanıyor, lütfen bekleyin...',
+          });
+        } else {
+          addToast({
+            id: 'status_check',
+            type: 'error',
+            title: 'İşlem Başarısız (Bağlantı Yok)',
+            message: st.details || 'WhatsApp sunucusuna bağlanılamadı. URL ve API anahtarını kontrol edin.',
+          });
+        }
+      }
+      return st;
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Bağlantı hatası oluştu.';
+      const failStatus: WhatsAppStatus = {
         state: 'disconnected',
         sessionId: config.sessionId,
-        details: 'Bağlantı sağlanamadı.'
-      });
+        details: errMsg,
+      };
+      setWhatsAppStatus(failStatus);
+      if (interactive) {
+        addToast({
+          id: 'status_check',
+          type: 'error',
+          title: 'İşlem Başarısız',
+          message: errMsg,
+        });
+      }
+      return failStatus;
     } finally {
       setIsCheckingStatus(false);
     }
@@ -508,10 +578,85 @@ export default function App() {
     setHistory([]);
   };
 
-  // 9. Config Action
-  const handleSaveConfig = (updated: Partial<typeof config>) => {
+  // 9. Config Action with interactive verification
+  const handleSaveConfig = async (updated: Partial<typeof config>): Promise<WhatsAppStatus> => {
+    addToast({
+      id: 'save_config',
+      type: 'loading',
+      title: 'Ayarlar Kaydediliyor',
+      message: 'Yapılandırma uygulanıyor ve WhatsApp bağlantısı doğrulanıyor...',
+    });
+
     storageService.saveConfig(updated);
-    setConfig((prev) => ({ ...prev, ...updated }));
+    const newConfig = { ...config, ...updated };
+    setConfig(newConfig);
+
+    // Update active provider's config
+    openWaProvider.updateConfig(newConfig);
+    metaCloudProvider.updateConfig({
+      accessToken: newConfig.metaToken || '',
+      phoneNumberId: newConfig.metaPhoneNumberId || '',
+    });
+
+    let targetProvider: WhatsAppProvider = webProvider;
+    if (newConfig.providerType === 'openwa') {
+      targetProvider = openWaProvider;
+    } else if (newConfig.providerType === 'meta_cloud') {
+      targetProvider = metaCloudProvider;
+    } else if (isMockMode) {
+      targetProvider = mockProvider;
+    }
+
+    try {
+      const st = await targetProvider.getStatus();
+      setWhatsAppStatus(st);
+      if (st.state === 'qr_ready') {
+        const qr = await targetProvider.getQrCode();
+        setQrCodeUrl(qr);
+      } else {
+        setQrCodeUrl(null);
+      }
+
+      if (st.state === 'connected') {
+        addToast({
+          id: 'save_config',
+          type: 'success',
+          title: 'İşleminiz Başarılı',
+          message: 'Ayarlar başarıyla kaydedildi! WhatsApp bağlı ve gönderime hazır.',
+        });
+      } else if (st.state === 'qr_ready') {
+        addToast({
+          id: 'save_config',
+          type: 'warning',
+          title: 'İşleminiz Başarılı: QR Kod Hazır',
+          message: 'Ayarlar kaydedildi. Lütfen QR kodu telefonunuzdaki WhatsApp ile taratın.',
+        });
+      } else if (st.state === 'starting' || st.state === 'authenticating') {
+        addToast({
+          id: 'save_config',
+          type: 'info',
+          title: 'İşlem Başarılı: Başlatılıyor',
+          message: 'Ayarlar kaydedildi. WhatsApp motoru başlatılıyor, lütfen bekleyin...',
+        });
+      } else {
+        addToast({
+          id: 'save_config',
+          type: 'error',
+          title: 'İşlem Başarısız (Bağlantı Kurulamadı)',
+          message: `Ayarlar kaydedildi ancak WhatsApp servisine bağlanılamadı: ${st.details || 'Sunucu yanıt vermedi'}`,
+        });
+      }
+      return st;
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Bağlantı hatası oluştu.';
+      addToast({
+        id: 'save_config',
+        type: 'error',
+        title: 'İşlem Başarısız',
+        message: `Ayarlar kaydedildi fakat bağlantı sağlanamadı: ${errMsg}`,
+      });
+      return { state: 'disconnected', sessionId: newConfig.sessionId || 'default', details: errMsg };
+    }
   };
 
   return (
@@ -520,7 +665,7 @@ export default function App() {
       <Header
         status={whatsAppStatus}
         onOpenSettings={() => setIsSettingsOpen(true)}
-        onRefreshStatus={checkStatus}
+        onRefreshStatus={() => checkStatus(true)}
         isCheckingStatus={isCheckingStatus}
         isMockMode={isMockMode}
         onToggleMockMode={() => setIsMockMode(!isMockMode)}
@@ -622,13 +767,36 @@ export default function App() {
         config={config}
         onSaveConfig={handleSaveConfig}
         status={whatsAppStatus}
-        onCheckStatus={checkStatus}
+        onCheckStatus={() => checkStatus(true)}
         isChecking={isCheckingStatus}
         qrCodeUrl={qrCodeUrl}
         onStartSession={async () => {
-          await openWaProvider.createSession();
-          await openWaProvider.startSession();
-          await checkStatus();
+          addToast({
+            id: 'session_start',
+            type: 'loading',
+            title: 'Oturum Başlatılıyor',
+            message: 'OpenWA üzerinde oturum başlatılıyor...',
+          });
+          const created = await openWaProvider.createSession();
+          const started = await openWaProvider.startSession();
+          const st = await checkStatus(false);
+          if (created || started || st.state === 'qr_ready' || st.state === 'starting' || st.state === 'connected') {
+            addToast({
+              id: 'session_start',
+              type: 'success',
+              title: 'İşleminiz Başarılı',
+              message: 'Oturum başlatıldı! QR kod hazırlandığında görüntülenecektir.',
+            });
+            return true;
+          } else {
+            addToast({
+              id: 'session_start',
+              type: 'error',
+              title: 'İşlem Başarısız',
+              message: 'Oturum başlatılamadı. Sunucu URL ve portunu kontrol edin.',
+            });
+            return false;
+          }
         }}
       />
 
@@ -678,6 +846,9 @@ export default function App() {
         allItems={matchedItems}
         onSelectIndex={(index) => setPreviewItem(matchedItems[index])}
       />
+
+      {/* Floating App-wide Toast Notifications */}
+      <ToastNotification toasts={toasts} onDismiss={removeToast} />
     </div>
   );
 }

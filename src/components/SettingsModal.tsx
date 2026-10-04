@@ -13,6 +13,10 @@ import {
   Key,
   Info,
   ExternalLink,
+  Copy,
+  Check,
+  Loader2,
+  Terminal,
 } from 'lucide-react';
 
 interface SettingsModalProps {
@@ -33,12 +37,12 @@ interface SettingsModalProps {
         examName?: string;
       }
     >
-  ) => void;
+  ) => Promise<WhatsAppStatus | void> | void;
   status: WhatsAppStatus;
-  onCheckStatus: () => void;
+  onCheckStatus: () => Promise<WhatsAppStatus | void> | void;
   isChecking: boolean;
   qrCodeUrl: string | null;
-  onStartSession: () => void;
+  onStartSession: () => Promise<boolean | void> | void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -70,9 +74,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [schoolName, setSchoolName] = useState(config.schoolName || 'Özel Başarı Okulları');
   const [examName, setExamName] = useState(config.examName || 'Genel Değerlendirme Sınavı');
   const [showKey, setShowKey] = useState(false);
-  const [savedSuccess, setSavedSuccess] = useState(false);
 
-  // Keep local state in sync when config opens
+  // User feedback banner state for prominent success/error notifications
+  const [feedback, setFeedback] = useState<{
+    type: 'success' | 'error' | 'loading' | 'info';
+    title: string;
+    message: string;
+  } | null>(null);
+
+  const [copiedDockerCmd, setCopiedDockerCmd] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Sync state on open
   useEffect(() => {
     if (isOpen) {
       setProviderType(config.providerType || 'whatsapp_web');
@@ -84,31 +97,145 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setDelaySeconds(config.delaySeconds || 3);
       setSchoolName(config.schoolName || 'Özel Başarı Okulları');
       setExamName(config.examName || 'Genel Değerlendirme Sınavı');
+      setFeedback(null);
     }
   }, [isOpen, config]);
 
   if (!isOpen) return null;
 
-  // Detect key types for helpful user feedback
   const trimmedKey = (providerType === 'meta_cloud' ? metaToken : apiKey).trim();
   const isGeminiKey = trimmedKey.startsWith('AIzaSy');
   const isMetaToken = trimmedKey.startsWith('EAAG') || trimmedKey.startsWith('EAA');
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSaveConfig({
-      providerType,
-      baseUrl: baseUrl.trim(),
-      apiKey: apiKey.trim(),
-      sessionId: sessionId.trim(),
-      metaToken: metaToken.trim(),
-      metaPhoneNumberId: metaPhoneNumberId.trim(),
-      delaySeconds: Number(delaySeconds) || 3,
-      schoolName: schoolName.trim(),
-      examName: examName.trim(),
+    setIsSubmitting(true);
+    setFeedback({
+      type: 'loading',
+      title: 'Ayarlar Kaydediliyor',
+      message: 'Yapılandırma uygulanıyor ve bağlantı doğrulanıyor...',
     });
-    setSavedSuccess(true);
-    setTimeout(() => setSavedSuccess(false), 2000);
+
+    try {
+      const updatedConfig = {
+        providerType,
+        baseUrl: baseUrl.trim(),
+        apiKey: apiKey.trim(),
+        sessionId: sessionId.trim() || 'default',
+        metaToken: metaToken.trim(),
+        metaPhoneNumberId: metaPhoneNumberId.trim(),
+        delaySeconds: Number(delaySeconds) || 3,
+        schoolName: schoolName.trim(),
+        examName: examName.trim(),
+      };
+
+      const resultStatus = await onSaveConfig(updatedConfig);
+      const currentSt = resultStatus || status;
+
+      if (currentSt.state === 'connected') {
+        setFeedback({
+          type: 'success',
+          title: 'İşleminiz Başarılı',
+          message: 'Ayarlar başarıyla kaydedildi! WhatsApp bağlı ve gönderime hazır.',
+        });
+      } else if (currentSt.state === 'qr_ready') {
+        setFeedback({
+          type: 'info',
+          title: 'İşleminiz Başarılı (QR Kod Hazır)',
+          message: 'Ayarlar kaydedildi. Lütfen aşağıdaki QR kodu telefonunuzdaki WhatsApp ile taratın.',
+        });
+      } else if (currentSt.state === 'starting' || currentSt.state === 'authenticating') {
+        setFeedback({
+          type: 'info',
+          title: 'İşlem Başarılı: Başlatılıyor',
+          message: 'Ayarlar kaydedildi. WhatsApp motoru başlatılıyor, lütfen bekleyin...',
+        });
+      } else {
+        setFeedback({
+          type: 'error',
+          title: 'İşlem Başarısız (Bağlantı Kurulamadı)',
+          message: `Ayarlar kaydedildi ancak WhatsApp servisine bağlanılamadı: ${currentSt.details || 'Sunucu yanıt vermedi. Lütfen URL ve API anahtarını kontrol edin.'}`,
+        });
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Bilinmeyen hata';
+      setFeedback({
+        type: 'error',
+        title: 'İşlem Başarısız',
+        message: `Ayarlar kaydedilemedi: ${errMsg}`,
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleRefreshClick = async () => {
+    setFeedback({
+      type: 'loading',
+      title: 'Bağlantı Kontrol Ediliyor',
+      message: 'WhatsApp sunucusuna erişim test ediliyor...',
+    });
+
+    try {
+      const refreshed = await onCheckStatus();
+      const currentSt = refreshed || status;
+
+      if (currentSt.state === 'connected') {
+        setFeedback({
+          type: 'success',
+          title: 'İşleminiz Başarılı',
+          message: `WhatsApp bağlantısı aktif! (${currentSt.phoneConnected || 'Bağlı'})`,
+        });
+      } else if (currentSt.state === 'qr_ready') {
+        setFeedback({
+          type: 'info',
+          title: 'QR Kod Bekleniyor',
+          message: 'Oturum aktif, lütfen QR kodu telefonunuzdan taratın.',
+        });
+      } else {
+        setFeedback({
+          type: 'error',
+          title: 'İşlem Başarısız',
+          message: `Bağlantı kurulamadı: ${currentSt.details || 'Sunucuya ulaşılamıyor.'}`,
+        });
+      }
+    } catch {
+      setFeedback({
+        type: 'error',
+        title: 'İşlem Başarısız',
+        message: 'WhatsApp bağlantısı sorgulanamadı.',
+      });
+    }
+  };
+
+  const handleStartSessionClick = async () => {
+    setFeedback({
+      type: 'loading',
+      title: 'Oturum Başlatılıyor',
+      message: 'OpenWA üzerinde oturum açılıyor...',
+    });
+
+    try {
+      await onStartSession();
+      setFeedback({
+        type: 'success',
+        title: 'İşleminiz Başarılı',
+        message: 'Oturum başlatma komutu iletildi. QR kod yükleniyor...',
+      });
+    } catch {
+      setFeedback({
+        type: 'error',
+        title: 'İşlem Başarısız',
+        message: 'Oturum başlatılamadı. Sunucu URL ve portunu kontrol edin.',
+      });
+    }
+  };
+
+  const copyDockerCommand = () => {
+    const cmd = 'docker run -v $(pwd)/data:/app/data -p 2785:2785 openwa/wa-automate';
+    navigator.clipboard.writeText(cmd);
+    setCopiedDockerCmd(true);
+    setTimeout(() => setCopiedDockerCmd(false), 2500);
   };
 
   const getStatusColor = () => {
@@ -126,7 +253,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
-      <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl shadow-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-150 text-neutral-900 dark:text-neutral-100 transition-colors">
+      <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl shadow-2xl w-full max-w-xl max-h-[92vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-150 text-neutral-900 dark:text-neutral-100 transition-colors">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-800/50">
           <div>
@@ -134,7 +261,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               WhatsApp Gönderim ve API Ayarları
             </h2>
             <p className="text-xs text-neutral-500 dark:text-neutral-400">
-              Gönderim yöntemini seçin ve bağlantınızı yapılandırın.
+              Gönderim yöntemini seçin, API bilgilerinizi yapılandırın ve bağlantınızı test edin.
             </p>
           </div>
           <button
@@ -145,7 +272,38 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </button>
         </div>
 
-        <div className="p-5 space-y-5">
+        <div className="p-5 space-y-4">
+          {/* Action Notification Result Banner (Prominent Feedback) */}
+          {feedback && (
+            <div
+              className={`p-3.5 rounded-lg border text-xs flex items-start gap-2.5 transition-all animate-in fade-in slide-in-from-top-2 ${
+                feedback.type === 'success'
+                  ? 'bg-emerald-50 dark:bg-emerald-950/70 border-emerald-300 dark:border-emerald-700 text-emerald-950 dark:text-emerald-100'
+                  : feedback.type === 'error'
+                  ? 'bg-rose-50 dark:bg-rose-950/70 border-rose-300 dark:border-rose-700 text-rose-950 dark:text-rose-100'
+                  : feedback.type === 'loading'
+                  ? 'bg-blue-50 dark:bg-blue-950/70 border-blue-300 dark:border-blue-700 text-blue-950 dark:text-blue-100'
+                  : 'bg-amber-50 dark:bg-amber-950/70 border-amber-300 dark:border-amber-700 text-amber-950 dark:text-amber-100'
+              }`}
+            >
+              {feedback.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />}
+              {feedback.type === 'error' && <AlertCircle className="w-5 h-5 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />}
+              {feedback.type === 'loading' && <Loader2 className="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0 animate-spin mt-0.5" />}
+              {feedback.type === 'info' && <Info className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />}
+              <div className="flex-1">
+                <h4 className="font-bold text-xs">{feedback.title}</h4>
+                <p className="text-[11px] leading-relaxed mt-0.5 opacity-90">{feedback.message}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFeedback(null)}
+                className="text-current opacity-50 hover:opacity-100 p-0.5 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
           {/* Provider Selection Tabs */}
           <div>
             <label className="block text-xs font-semibold text-neutral-800 dark:text-neutral-200 mb-2">
@@ -202,7 +360,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <Server className={`w-5 h-5 mb-1.5 ${providerType === 'openwa' ? 'text-neutral-900 dark:text-white' : 'text-neutral-400'}`} />
                 <span className="font-semibold">OpenWA / Docker</span>
                 <span className="text-[10px] text-neutral-500 dark:text-neutral-400 mt-0.5 font-normal">
-                  Yerel REST Servisi
+                  Tam Otomatik PDF Eki
                 </span>
               </button>
             </div>
@@ -210,16 +368,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {/* Key Type Warning Banners */}
           {isGeminiKey && (
-            <div className="p-3.5 bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 rounded-lg text-xs text-amber-900 dark:text-amber-200 space-y-1.5">
+            <div className="p-3 bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 rounded-lg text-xs text-amber-900 dark:text-amber-200 space-y-1">
               <div className="flex items-center gap-2 font-semibold">
                 <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
-                <span>Google Gemini / AI Studio API Anahtarı Algılandı!</span>
+                <span>Google Gemini API Anahtarı Algılandı!</span>
               </div>
               <p className="text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
-                Girdiğiniz anahtar (<span className="font-mono font-medium">AIzaSy...</span>) Google Gemini yapay zeka anahtarıdır. WhatsApp üzerinden velilere mesaj veya karne göndermek için Google anahtarı kullanılamaz.
-              </p>
-              <p className="text-[11px] font-medium text-emerald-800 dark:text-emerald-300">
-                👉 Hemen yukarıdaki <strong>&quot;WhatsApp Web&quot;</strong> seçeneğine tıklayarak herhangi bir API anahtarı olmadan velilere doğrudan WhatsApp mesajı gönderebilirsiniz!
+                Girdiğiniz anahtar (<span className="font-mono">AIzaSy...</span>) yapay zeka anahtarıdır. WhatsApp için kullanılamaz. Sıfır kurulum için lütfen <strong>&quot;WhatsApp Web&quot;</strong> seçeneğini tercih edin.
               </p>
             </div>
           )}
@@ -231,7 +386,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <span>Meta WhatsApp Cloud API Token&apos;ı Algılandı</span>
               </div>
               <p className="text-[11px] text-blue-800 dark:text-blue-300">
-                Girdiğiniz anahtar bir Meta Cloud API token&apos;ıdır. Lütfen yukarıdan <strong>&quot;Meta Cloud API&quot;</strong> sekmesini seçin ve Phone Number ID bilginizi girin.
+                Lütfen yukarıdan <strong>&quot;Meta Cloud API&quot;</strong> sekmesini seçin ve Phone Number ID bilginizi girin.
               </p>
             </div>
           )}
@@ -247,19 +402,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     ? 'Bağlı (Gönderime Hazır)'
                     : status.state === 'qr_ready'
                     ? 'QR Kod Bekleniyor'
+                    : status.state === 'starting' || status.state === 'authenticating'
+                    ? 'Başlatılıyor...'
                     : status.state === 'error'
-                    ? 'Bağlantı Kurulamadı'
+                    ? 'Bağlantı Hatası'
                     : 'Bağlantı Yok'}
                 </span>
               </div>
               <button
                 type="button"
-                onClick={onCheckStatus}
+                onClick={handleRefreshClick}
                 disabled={isChecking}
-                className="flex items-center gap-1 text-[11px] underline opacity-90 hover:opacity-100 cursor-pointer"
+                className="flex items-center gap-1 text-[11px] font-semibold underline opacity-90 hover:opacity-100 cursor-pointer disabled:opacity-50"
               >
-                <RefreshCw className={`w-3 h-3 ${isChecking ? 'animate-spin' : ''}`} />
-                <span>Yenile</span>
+                <RefreshCw className={`w-3.5 h-3.5 ${isChecking ? 'animate-spin' : ''}`} />
+                <span>Durumu Yenile</span>
               </button>
             </div>
 
@@ -268,20 +425,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {status.details}
               </p>
             )}
+
+            {/* QR Code view if waiting for QR scan */}
+            {status.state === 'qr_ready' && qrCodeUrl && (
+              <div className="mt-2 p-3 bg-white dark:bg-neutral-900 rounded-lg border border-amber-300 dark:border-amber-800 flex flex-col items-center gap-2 text-center">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-900 dark:text-amber-200">
+                  <QrCode className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                  <span>WhatsApp ile QR Kodu Taratın</span>
+                </div>
+                <img
+                  src={qrCodeUrl}
+                  alt="WhatsApp QR Kodu"
+                  className="w-48 h-48 rounded border border-neutral-200 dark:border-neutral-700 bg-white p-2"
+                />
+                <p className="text-[10px] text-neutral-500 max-w-xs">
+                  Telefonunuzda WhatsApp &gt; Bağlı Cihazlar &gt; Cihaz Bağla adımlarını takip edin.
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Configuration Form */}
           <form onSubmit={handleSave} className="space-y-4">
             {/* 1. WHATSAPP WEB MODE */}
             {providerType === 'whatsapp_web' && (
-              <div className="p-4 bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-lg space-y-2.5 text-xs text-emerald-950 dark:text-emerald-200">
+              <div className="p-4 bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-lg space-y-2 text-xs text-emerald-950 dark:text-emerald-200">
                 <div className="flex items-center gap-2 font-semibold text-emerald-900 dark:text-emerald-300">
                   <Globe className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                   <span>WhatsApp Web Otomatik Gönderim (API Gerektirmez)</span>
                 </div>
                 <p className="text-[11px] leading-relaxed text-emerald-900/90 dark:text-emerald-300/80">
-                  Bu mod açıkken hiçbir harici sunucu, Docker veya API anahtarına ihtiyaç duyulmaz. Sistem, velinin numarasına mesajı ve karne belgesini iletir. Gönderim esnasında bilgisayarınıza kesinlikle gereksiz dosya indirilmez; karne doğrudan WhatsApp mesajına eklenir.
+                  Bu modda hiçbir sunucu, Docker veya API anahtarına ihtiyaç duyulmaz. Sistem velinin numarasına göre WhatsApp Web sohbetini otomatik açar.
                 </p>
+                <div className="p-2 bg-emerald-100/60 dark:bg-emerald-900/40 rounded border border-emerald-300/50 dark:border-emerald-700/50 text-[11px] space-y-1">
+                  <strong>💡 PDF Eki İpucu:</strong> WhatsApp güvenlik kuralları gereği harici web linkleri otomatik dosya yükleyemez. Sohbet açıldığında PDF&apos;i pencereye sürükleyip bırakarak veya sol alttaki <strong>&quot;+&quot; ➔ Belge</strong> seçeneğiyle ekleyebilirsiniz.
+                </div>
               </div>
             )}
 
@@ -351,10 +529,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </a>
                 </div>
 
+                {/* Info about real automatic PDF sending */}
+                <div className="p-2.5 bg-neutral-100 dark:bg-neutral-800 rounded border border-neutral-200 dark:border-neutral-700 text-[11px] leading-relaxed text-neutral-700 dark:text-neutral-300">
+                  ✨ <strong>Tam Otomatik PDF Gönderimi:</strong> OpenWA modunda sistem arka planda WhatsApp sunucusuyla iletişim kurar. PDF belgeleri velilere **gerçek bir dosya eki** olarak doğrudan gider.
+                </div>
+
                 <div>
-                  <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1">
-                    Sunucu API URL Adresi
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
+                      Sunucu API URL Adresi
+                    </label>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setBaseUrl('http://localhost:2785/api')}
+                        className="text-[10px] text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200 underline cursor-pointer"
+                      >
+                        :2785/api
+                      </button>
+                      <span className="text-[10px] text-neutral-400">•</span>
+                      <button
+                        type="button"
+                        onClick={() => setBaseUrl('http://localhost:2785')}
+                        className="text-[10px] text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200 underline cursor-pointer"
+                      >
+                        :2785
+                      </button>
+                    </div>
+                  </div>
                   <input
                     type="text"
                     value={baseUrl}
@@ -381,9 +583,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     type={showKey ? 'text' : 'password'}
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="OpenWA sunucusundaki data/.api-key anahtarı"
+                    placeholder="Eğer sunucunuzda API anahtarı ayarlıysa girin (isteğe bağlı)"
                     className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg text-xs font-mono text-neutral-900 dark:text-neutral-100 focus:outline-hidden focus:ring-1 focus:ring-neutral-900 dark:focus:ring-neutral-400 bg-white dark:bg-neutral-800"
                   />
+                  <p className="text-[10px] text-neutral-400 mt-1">
+                    Not: Yerel docker sunucunuzda anahtar yoksa boş bırakabilirsiniz.
+                  </p>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
@@ -402,12 +607,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div className="flex items-end">
                     <button
                       type="button"
-                      onClick={onStartSession}
-                      className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 rounded-lg text-xs text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-700 font-medium transition-colors cursor-pointer"
+                      onClick={handleStartSessionClick}
+                      className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 rounded-lg text-xs text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-700 font-medium transition-colors cursor-pointer flex items-center justify-center gap-1.5"
                     >
-                      Oturum Başlat
+                      <QrCode className="w-3.5 h-3.5" />
+                      <span>Oturum Başlat</span>
                     </button>
                   </div>
+                </div>
+
+                {/* Docker Quick Command Helper */}
+                <div className="pt-2 border-t border-neutral-200 dark:border-neutral-700 space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px] font-medium text-neutral-600 dark:text-neutral-400">
+                    <span className="flex items-center gap-1">
+                      <Terminal className="w-3 h-3 text-neutral-500" />
+                      <span>Hızlı Docker Başlatma Komutu:</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={copyDockerCommand}
+                      className="flex items-center gap-1 text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                    >
+                      {copiedDockerCmd ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedDockerCmd ? 'Kopyalandı!' : 'Komutu Kopyala'}</span>
+                    </button>
+                  </div>
+                  <code className="block p-2 bg-neutral-900 text-neutral-200 rounded text-[10px] font-mono select-all overflow-x-auto">
+                    docker run -v $(pwd)/data:/app/data -p 2785:2785 openwa/wa-automate
+                  </code>
                 </div>
               </div>
             )}
@@ -450,44 +677,50 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   />
                 </div>
               </div>
-            </div>
 
-            {/* General Settings: Delay */}
-            <div>
-              <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1">
-                Öğrenciler / Veliler Arası Gönderim Bekleme Süresi
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={1}
-                  max={15}
-                  value={delaySeconds}
-                  onChange={(e) => setDelaySeconds(Number(e.target.value))}
-                  className="w-24 px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg text-xs font-mono text-neutral-900 dark:text-neutral-100 focus:outline-hidden focus:ring-1 focus:ring-neutral-900 dark:focus:ring-neutral-400 bg-white dark:bg-neutral-800"
-                />
-                <span className="text-xs text-neutral-500 dark:text-neutral-400">saniye (WhatsApp spam engellemesi için önerilir)</span>
+              <div>
+                <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                  Gönderimler Arası Güvenlik Gecikmesi (Saniye)
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="number"
+                    min="1"
+                    max="30"
+                    value={delaySeconds}
+                    onChange={(e) => setDelaySeconds(Number(e.target.value))}
+                    className="w-24 px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg text-xs font-mono text-neutral-900 dark:text-neutral-100 focus:outline-hidden focus:ring-1 focus:ring-neutral-900 dark:focus:ring-neutral-400 bg-white dark:bg-neutral-800"
+                  />
+                  <span className="text-[11px] text-neutral-500">
+                    Önerilen: 3-5 saniye (Spam engelini önler)
+                  </span>
+                </div>
               </div>
             </div>
 
-            {/* Bottom Actions */}
-            <div className="pt-3 border-t border-neutral-100 dark:border-neutral-800 flex items-center justify-between">
+            {/* Bottom Actions Bar */}
+            <div className="pt-3 border-t border-neutral-200 dark:border-neutral-800 flex items-center justify-between gap-3">
               <span className="text-xs text-neutral-500 dark:text-neutral-400">
                 Seçim: <strong className="text-neutral-800 dark:text-neutral-200">{providerType === 'whatsapp_web' ? 'WhatsApp Web' : providerType === 'meta_cloud' ? 'Meta Cloud API' : 'OpenWA Docker'}</strong>
               </span>
 
               <div className="flex items-center gap-2">
-                {savedSuccess && (
-                  <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 font-medium">
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span>Ayarlar Kaydedildi</span>
-                  </span>
-                )}
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 rounded-lg text-xs font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-100 transition-colors shadow-xs cursor-pointer active:scale-98"
+                  disabled={isSubmitting}
+                  className="px-4 py-2.5 bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 rounded-lg text-xs font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-100 transition-all shadow-sm cursor-pointer active:scale-98 disabled:opacity-50 flex items-center gap-1.5"
                 >
-                  Ayarları Kaydet ve Uygula
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Kaydediliyor...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Ayarları Kaydet ve Uygula</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>
