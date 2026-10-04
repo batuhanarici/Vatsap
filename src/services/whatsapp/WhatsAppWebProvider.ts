@@ -50,10 +50,8 @@ export class WhatsAppWebProvider implements WhatsAppProvider {
   ): Promise<SendResult> {
     const cleanPhone = normalizePhoneNumber(phone);
 
-    // 1. Prepare message text to send in the WhatsApp message
-    const messageToSend = caption
-      ? `${caption}\n\n📎 Ekli Belge: ${fileName}`
-      : `Sayın Velimiz, öğrenci karnesi ekte bilgilerinize sunulmuştur.\n\n📎 Belge: ${fileName}`;
+    // 1. Prepare message text to send in the WhatsApp message (clean message without fake text labels)
+    const messageToSend = caption || 'Sayın Velimiz, öğrenci karnesi ekte bilgilerinize sunulmuştur.';
 
     // 2. Put the report card into clipboard so that Cmd+V / Ctrl+V in WhatsApp Web pastes it directly into the chat
     try {

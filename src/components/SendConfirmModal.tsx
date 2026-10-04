@@ -14,6 +14,7 @@ import {
   Moon,
   Sun,
   Sparkles,
+  Info,
 } from 'lucide-react';
 
 interface SendConfirmModalProps {
@@ -373,6 +374,20 @@ export const SendConfirmModal: React.FC<SendConfirmModalProps> = ({
               <span>Tahmini gönderim süresi:</span>
               <span className="font-mono">~{estimatedMinutes > 1 ? `${estimatedMinutes} dakika` : '30-45 saniye'}</span>
             </div>
+          </div>
+
+          {/* Important Technical Delivery Note */}
+          <div className="p-3 bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 rounded-lg text-xs text-indigo-950 dark:text-indigo-200 space-y-1.5">
+            <div className="flex items-center gap-1.5 font-semibold text-indigo-900 dark:text-indigo-300">
+              <Info className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+              <span>WhatsApp PDF İletimi Hakkında Bilgi</span>
+            </div>
+            <p className="text-[11px] leading-relaxed text-indigo-900/90 dark:text-indigo-300/90">
+              <strong>WhatsApp Web Modu:</strong> Web tarayıcı güvenlik standardı gereği harici linkler üzerinden WhatsApp&apos;a otomatik dosya enjekte edilemez. Sohbet açıldığında PDF belgesini <strong>WhatsApp ekranına sürükleyip bırakarak</strong> veya sol alttaki <strong>&quot;+&quot; (Ataş) ➔ Belge</strong> seçeneğiyle ekleyebilirsiniz.
+            </p>
+            <p className="text-[11px] leading-relaxed text-emerald-800 dark:text-emerald-300 font-medium">
+              💡 <strong>Tam Otomatik PDF Eki:</strong> Herhangi bir sekme açmadan PDF&apos;lerin veliye doğrudan yeşil dosya eki olarak gitmesi için <strong>Ayarlar ➔ OpenWA / Docker</strong> modunu kullanabilirsiniz.
+            </p>
           </div>
         </div>
 
