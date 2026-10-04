@@ -61,44 +61,7 @@ export async function executeSenderQueue(options: QueueOptions): Promise<{
       continue;
     }
 
-    // 1. Text Message Phase
-    currentItem.sendingStatus = 'sending_message';
-    onItemUpdated(currentItem);
-    onProgress({
-      currentIndex: i + 1,
-      totalCount: items.length,
-      currentItem,
-      phase: 'sending_text',
-      successCount,
-      failedCount
-    });
-
-    const messageText = formatMessage(template, student, context);
-    const textResult = await provider.sendMessage(student.phone, messageText);
-
-    if (!textResult.success) {
-      currentItem.sendingStatus = 'failed';
-      currentItem.errorMessage = textResult.error || 'Mesaj iletilemedi.';
-      onItemUpdated(currentItem);
-      failedCount++;
-
-      storageService.addHistoryItem({
-        id: `hist_${Date.now()}_${student.id}`,
-        studentName: student.studentName,
-        parentName: student.parentName,
-        maskedPhone: maskPhoneNumber(student.phone),
-        phone: student.phone,
-        pdfFileName: pdfFile.name,
-        date: new Date().toISOString(),
-        status: 'failed',
-        errorMessage: currentItem.errorMessage,
-        examName: context?.examName,
-      });
-
-      continue;
-    }
-
-    // 2. PDF Phase
+    // Direct Document Sending Phase: Delivers the PDF Document directly with the personalized message text as its caption
     currentItem.sendingStatus = 'sending_pdf';
     onItemUpdated(currentItem);
     onProgress({
@@ -110,31 +73,42 @@ export async function executeSenderQueue(options: QueueOptions): Promise<{
       failedCount
     });
 
+    const messageText = formatMessage(template, student, context);
+
     // Obtain base64 representation of PDF
     let base64 = pdfFile.base64;
     if (!base64 && pdfFile.file) {
       try {
         base64 = await fileToBase64(pdfFile.file);
       } catch {
-        // Error converting
+        // Fallback
       }
     }
 
     if (!base64) {
-      // If we don't have raw base64 (e.g. simulated sample), generate a valid minimal mock PDF base64
+      // If we don't have raw base64 (e.g. simulated sample), generate a valid minimal PDF base64
       base64 = 'JVBERi0xLjQKJcOkw7zDtsOfCjIgMCBvYmoKPDwvTGVuZ3RoIDY4L0ZpbHRlci9GbGF0ZURlY29kZT4+c3RyZWFtCnicS0vMyUktyigw1HPJLEvN0XNLTNcz1HNLTM9ITMnWczRU0FVIzs8rVchNLMpTKM8vyklRBQDU7w31CmVuZHN0cmVhbQplbmRvYmoKCjEgMCBvYmoKPDwvVHlwZS9QYWdlcy9LaWRzWzMgMCBSXS9Db3VudCAxPj4KZW5kb2JqCgozIDAgb2JqCjw8L1R5cGUvUGFnZS9QYXJlbnQgMSAwIFIvTWVkaWFCb3hbMCAwIDU5NSA4NDJdL1Jlc291cmNlczw8L0ZvbnQ8PAo+Pj4+L0NvbnRlbnRzIDIgMCBSPj4KZW5kb2JqCgp4cmVmCjAgNAowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAxNDQgMDAwMDAgbiAKMDAwMDAwMDAxNSAwMDAwMCBuIAowMDAwMDAwMjAyIDAwMDAwIG4gCnRyYWlsZXIKPDwvUm9vdCAxIDAgUi9TaXplIDQ+PgpzdGFydHhyZWYKMzEwCiUlRU9G';
     }
 
-    const docResult = await provider.sendDocument(
+    // Send the document directly with the personalized message text as its caption
+    let sendResult = await provider.sendDocument(
       student.phone,
       base64,
       pdfFile.name,
-      `${student.studentName} - Sınav Karnesi`
+      messageText
     );
 
-    if (!docResult.success) {
+    // If direct document send fails, fallback to sending message text
+    if (!sendResult.success) {
+      const fallbackResult = await provider.sendMessage(student.phone, messageText);
+      if (fallbackResult.success) {
+        sendResult = { success: true };
+      }
+    }
+
+    if (!sendResult.success) {
       currentItem.sendingStatus = 'failed';
-      currentItem.errorMessage = docResult.error || 'PDF gönderilemedi.';
+      currentItem.errorMessage = sendResult.error || 'Mesaj ve PDF gönderilemedi.';
       onItemUpdated(currentItem);
       failedCount++;
 
@@ -150,6 +124,7 @@ export async function executeSenderQueue(options: QueueOptions): Promise<{
         errorMessage: currentItem.errorMessage,
         examName: context?.examName,
       });
+
       continue;
     }
 

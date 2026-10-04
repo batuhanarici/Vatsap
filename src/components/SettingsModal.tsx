@@ -280,7 +280,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <span>WhatsApp Web Otomatik Gönderim (API Gerektirmez)</span>
                 </div>
                 <p className="text-[11px] leading-relaxed text-emerald-900/90 dark:text-emerald-300/80">
-                  Bu mod açıkken hiçbir harici sunucu, Docker veya API anahtarına ihtiyaç duyulmaz. Sistem, tarayıcınız veya masaüstü uygulamanız üzerinden velinin numarasına ve hazırladığınız mesaj şablonuna göre WhatsApp Web sohbetini otomatik açar ve belgeyi iliştirir.
+                  Bu mod açıkken hiçbir harici sunucu, Docker veya API anahtarına ihtiyaç duyulmaz. Sistem, velinin numarasına mesajı ve karne belgesini iletir. Gönderim esnasında bilgisayarınıza kesinlikle gereksiz dosya indirilmez; karne doğrudan WhatsApp mesajına eklenir.
                 </p>
               </div>
             )}
