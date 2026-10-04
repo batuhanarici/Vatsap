@@ -172,8 +172,8 @@ export const FolderSelector: React.FC<FolderSelectorProps> = ({
           <div>
             Klasörde bulunan PDF sayısı: <span className="font-semibold text-neutral-800 dark:text-neutral-200">{pdfFiles.length}</span>
           </div>
-          <div className="text-[11px] text-neutral-400 dark:text-neutral-500">
-            Türkçe karakter ve yazım varyasyonları otomatik eşleştirilir.
+          <div className="text-[11px] text-emerald-700 dark:text-emerald-400 font-medium">
+            ✓ Eşleşen PDF&apos;ler otomatik olarak öğrenci ad-soyadı ile adlandırılır ({'{ogrenci_adi}.pdf'}).
           </div>
         </div>
       )}

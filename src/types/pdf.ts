@@ -2,6 +2,7 @@ import { Student } from './student';
 
 export interface LocalPdfFile {
   name: string;
+  originalName?: string;
   size: number;
   lastModified?: number;
   path?: string;

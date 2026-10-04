@@ -90,11 +90,14 @@ export async function executeSenderQueue(options: QueueOptions): Promise<{
       base64 = 'JVBERi0xLjQKJcOkw7zDtsOfCjIgMCBvYmoKPDwvTGVuZ3RoIDY4L0ZpbHRlci9GbGF0ZURlY29kZT4+c3RyZWFtCnicS0vMyUktyigw1HPJLEvN0XNLTNcz1HNLTM9ITMnWczRU0FVIzs8rVchNLMpTKM8vyklRBQDU7w31CmVuZHN0cmVhbQplbmRvYmoKCjEgMCBvYmoKPDwvVHlwZS9QYWdlcy9LaWRzWzMgMCBSXS9Db3VudCAxPj4KZW5kb2JqCgozIDAgb2JqCjw8L1R5cGUvUGFnZS9QYXJlbnQgMSAwIFIvTWVkaWFCb3hbMCAwIDU5NSA4NDJdL1Jlc291cmNlczw8L0ZvbnQ8PAo+Pj4+L0NvbnRlbnRzIDIgMCBSPj4KZW5kb2JqCgp4cmVmCjAgNAowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAxNDQgMDAwMDAgbiAKMDAwMDAwMDAxNSAwMDAwMCBuIAowMDAwMDAwMjAyIDAwMDAwIG4gCnRyYWlsZXIKPDwvUm9vdCAxIDAgUi9TaXplIDQ+PgpzdGFydHhyZWYKMzEwCiUlRU9G';
     }
 
+    // Guarantee file name is the student's name and surname
+    const targetPdfFileName = `${student.studentName}.pdf`;
+
     // Send the document directly with the personalized message text as its caption
     let sendResult = await provider.sendDocument(
       student.phone,
       base64,
-      pdfFile.name,
+      targetPdfFileName,
       messageText
     );
 
@@ -118,7 +121,7 @@ export async function executeSenderQueue(options: QueueOptions): Promise<{
         parentName: student.parentName,
         maskedPhone: maskPhoneNumber(student.phone),
         phone: student.phone,
-        pdfFileName: pdfFile.name,
+        pdfFileName: targetPdfFileName,
         date: new Date().toISOString(),
         status: 'failed',
         errorMessage: currentItem.errorMessage,
@@ -140,7 +143,7 @@ export async function executeSenderQueue(options: QueueOptions): Promise<{
       parentName: student.parentName,
       maskedPhone: maskPhoneNumber(student.phone),
       phone: student.phone,
-      pdfFileName: pdfFile.name,
+      pdfFileName: targetPdfFileName,
       date: new Date().toISOString(),
       status: 'success',
       examName: context?.examName,

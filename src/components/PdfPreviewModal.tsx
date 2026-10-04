@@ -96,7 +96,9 @@ export const PdfPreviewModal: React.FC<PdfPreviewModalProps> = ({
     if (objectUrl) {
       const a = document.createElement('a');
       a.href = objectUrl;
-      a.download = currentItem.pdfFile?.name || 'karne.pdf';
+      a.download = currentItem?.student?.studentName
+        ? `${currentItem.student.studentName}.pdf`
+        : 'karne.pdf';
       a.click();
     } else {
       alert('Bu örnek bir sanal PDF kaydıdır. Gerçek bir PDF dosyası seçtiğinizde bilgisayarınıza indirebilirsiniz.');
@@ -117,10 +119,15 @@ export const PdfPreviewModal: React.FC<PdfPreviewModalProps> = ({
                 <h2 className="text-sm font-semibold text-white tracking-wide">
                   {currentItem.student.studentName}
                 </h2>
-                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3" />
-                  <span>Eşleşme Doğrulandı</span>
+                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1 font-mono">
+                  <FileCheck className="w-3 h-3" />
+                  <span>{currentItem.student.studentName}.pdf</span>
                 </span>
+                {currentItem.pdfFile?.originalName && currentItem.pdfFile.originalName !== `${currentItem.student.studentName}.pdf` && (
+                  <span className="text-[10px] text-neutral-400 font-mono hidden sm:inline">
+                    (Orijinal: {currentItem.pdfFile.originalName})
+                  </span>
+                )}
               </div>
               <p className="text-xs text-neutral-400 flex items-center gap-3 mt-0.5">
                 <span className="flex items-center gap-1">

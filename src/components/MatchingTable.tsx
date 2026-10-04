@@ -313,7 +313,7 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
               <th className="py-2.5 px-4 font-semibold">Sınıf / Şube</th>
               <th className="py-2.5 px-4 font-semibold">Veli</th>
               <th className="py-2.5 px-4 font-semibold">WhatsApp Numarası</th>
-              <th className="py-2.5 px-4 font-semibold">Eşleşen PDF Dosyası</th>
+              <th className="py-2.5 px-4 font-semibold">Karne PDF Adı (İsim Soyisim)</th>
               <th className="py-2.5 px-4 font-semibold">Durum</th>
               <th className="py-2.5 px-4 font-semibold text-right">Karne Önizle</th>
             </tr>
@@ -355,14 +355,25 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
                         <button
                           type="button"
                           onClick={() => onPreviewItem(item)}
-                          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 border border-neutral-200 dark:border-neutral-700 text-neutral-800 dark:text-neutral-200 font-mono text-[11px] transition-colors cursor-pointer group text-left"
-                          title="Karnenin ayrıntılı önizlemesine bakmak için tıklayın"
+                          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-50/70 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 border border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200 font-mono text-[11px] font-medium transition-colors cursor-pointer group text-left shadow-2xs"
+                          title="Öğrenci isim-soyismi ile adlandırılan karne belgesi. Önizlemek için tıklayın."
                         >
                           <FileCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                          <span className="truncate max-w-[190px] group-hover:underline">
+                          <span className="truncate max-w-[200px] font-semibold group-hover:underline">
                             {item.pdfFile.name}
                           </span>
                         </button>
+
+                        {item.pdfFile.originalName && item.pdfFile.originalName !== item.pdfFile.name && (
+                          <div
+                            className="text-[10px] text-neutral-500 dark:text-neutral-400 truncate max-w-[200px] flex items-center gap-1 font-mono"
+                            title={`Yüklenen Orijinal Dosya: ${item.pdfFile.originalName}`}
+                          >
+                            <span className="text-neutral-400">↺</span>
+                            <span>Orijinal: {item.pdfFile.originalName}</span>
+                          </div>
+                        )}
+
                         {item.matchMethod === 'content_ocr' && (
                           <div className="flex items-center gap-1 text-[10px] text-indigo-700 dark:text-indigo-300 font-semibold bg-indigo-50/80 dark:bg-indigo-950/60 px-1.5 py-0.5 rounded border border-indigo-200 dark:border-indigo-800 w-fit">
                             <Sparkles className="w-3 h-3 text-indigo-500 shrink-0" />

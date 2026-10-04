@@ -79,10 +79,15 @@ export function matchStudentsWithPdfs(
 
     if (bestPdf) {
       matchedPdfs.add(bestPdf.name);
+      const studentNamedPdf: LocalPdfFile = {
+        ...bestPdf,
+        originalName: bestPdf.originalName || bestPdf.name,
+        name: `${student.studentName}.pdf`,
+      };
       return {
         id: student.id,
         student,
-        pdfFile: bestPdf,
+        pdfFile: studentNamedPdf,
         status: 'ready' as MatchingStatus,
         sendingStatus: 'idle'
       };

@@ -200,9 +200,14 @@ export async function performDeepPdfContentMatching(
   const updatedMatches = currentMatches.map((item) => {
     if (newlyMatched[item.student.id]) {
       const matchData = newlyMatched[item.student.id];
+      const studentNamedPdf: LocalPdfFile = {
+        ...matchData.pdf,
+        originalName: matchData.pdf.originalName || matchData.pdf.name,
+        name: `${item.student.studentName}.pdf`,
+      };
       return {
         ...item,
-        pdfFile: matchData.pdf,
+        pdfFile: studentNamedPdf,
         status: item.student.phone && item.student.phone.length >= 10 ? ('ready' as const) : ('invalid_phone' as const),
         matchMethod: 'content_ocr' as const,
       };
