@@ -4,4 +4,6 @@ export interface MessageTemplate {
   tag: string;
   content: string;
   isDefault?: boolean;
+  createdAt?: number;
+  updatedAt?: number;
 }

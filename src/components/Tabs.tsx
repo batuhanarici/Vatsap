@@ -38,8 +38,8 @@ export const Tabs: React.FC<TabsProps> = ({
   ];
 
   return (
-    <div className="border-b border-neutral-200 bg-white">
-      <div className="max-w-6xl mx-auto px-6 flex space-x-6">
+    <div className="border-b border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 transition-colors">
+      <div className="max-w-6xl mx-auto px-6 flex space-x-6 overflow-x-auto">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -47,13 +47,19 @@ export const Tabs: React.FC<TabsProps> = ({
             <button
               key={tab.id}
               onClick={() => onChangeTab(tab.id)}
-              className={`flex items-center gap-2 py-3 text-xs font-medium border-b-2 transition-colors ${
+              className={`flex items-center gap-2 py-3 text-xs font-medium border-b-2 transition-colors cursor-pointer shrink-0 ${
                 isActive
-                  ? 'border-neutral-900 text-neutral-900 font-semibold'
-                  : 'border-transparent text-neutral-500 hover:text-neutral-800'
+                  ? 'border-neutral-900 dark:border-white text-neutral-900 dark:text-white font-semibold'
+                  : 'border-transparent text-neutral-500 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-200'
               }`}
             >
-              <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-neutral-900' : 'text-neutral-400'}`} />
+              <Icon
+                className={`w-3.5 h-3.5 ${
+                  isActive
+                    ? 'text-neutral-900 dark:text-white'
+                    : 'text-neutral-400 dark:text-neutral-500'
+                }`}
+              />
               <span>{tab.label}</span>
             </button>
           );

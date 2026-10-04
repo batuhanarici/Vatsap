@@ -2,12 +2,15 @@ import { Student } from '../types/student';
 import { HistoryItem } from '../types/history';
 import { OpenWAConfig } from '../types/whatsapp';
 import { MessageTemplate } from '../types/template';
+import { ScheduledDispatch } from '../types/schedule';
 
 const STUDENTS_STORAGE_KEY = 'karne_gonderici_students';
 const HISTORY_STORAGE_KEY = 'karne_gonderici_history';
 const TEMPLATES_STORAGE_KEY = 'karne_gonderici_templates_v2';
 const ACTIVE_TEMPLATE_ID_KEY = 'karne_gonderici_active_template_id';
 const CONFIG_STORAGE_KEY = 'karne_gonderici_config';
+const THEME_STORAGE_KEY = 'karne_gonderici_theme';
+const SCHEDULE_STORAGE_KEY = 'karne_gonderici_schedule';
 
 export const DEFAULT_TEMPLATES: MessageTemplate[] = [
   {
@@ -239,5 +242,56 @@ export const storageService = {
 
   clearHistory(): void {
     localStorage.removeItem(HISTORY_STORAGE_KEY);
+  },
+
+  getTheme(): 'light' | 'dark' {
+    try {
+      const saved = localStorage.getItem(THEME_STORAGE_KEY);
+      if (saved === 'dark' || saved === 'light') return saved;
+      if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        return 'dark';
+      }
+    } catch {
+      // Fallback
+    }
+    return 'light';
+  },
+
+  saveTheme(theme: 'light' | 'dark'): void {
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // Ignore
+    }
+  },
+
+  getSchedule(): ScheduledDispatch | null {
+    try {
+      const data = localStorage.getItem(SCHEDULE_STORAGE_KEY);
+      if (data) {
+        const parsed = JSON.parse(data) as ScheduledDispatch;
+        // If expired more than 30 mins ago, discard
+        if (parsed.targetTimestamp < Date.now() - 30 * 60 * 1000) {
+          localStorage.removeItem(SCHEDULE_STORAGE_KEY);
+          return null;
+        }
+        return parsed;
+      }
+    } catch {
+      // Fallback
+    }
+    return null;
+  },
+
+  saveSchedule(schedule: ScheduledDispatch | null): void {
+    try {
+      if (schedule) {
+        localStorage.setItem(SCHEDULE_STORAGE_KEY, JSON.stringify(schedule));
+      } else {
+        localStorage.removeItem(SCHEDULE_STORAGE_KEY);
+      }
+    } catch {
+      // Ignore
+    }
   }
 };

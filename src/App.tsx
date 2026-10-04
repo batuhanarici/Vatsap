@@ -16,12 +16,14 @@ import { TestMessageModal } from './components/TestMessageModal';
 import { SendConfirmModal } from './components/SendConfirmModal';
 import { SendingProgressModal } from './components/SendingProgressModal';
 import { PdfPreviewModal } from './components/PdfPreviewModal';
+import { ScheduleBanner } from './components/ScheduleBanner';
 
 import { Student, StudentFormData } from './types/student';
 import { LocalPdfFile, MatchedItem } from './types/pdf';
 import { WhatsAppStatus } from './types/whatsapp';
 import { HistoryItem } from './types/history';
 import { MessageTemplate } from './types/template';
+import { ScheduledDispatch } from './types/schedule';
 
 import { storageService, INITIAL_STUDENTS, SAMPLE_TEST_STUDENTS, DEFAULT_TEMPLATE } from './services/storageService';
 import { matchStudentsWithPdfs } from './services/pdfMatcher';
@@ -42,6 +44,20 @@ export default function App() {
   const [activeTemplateId, setActiveTemplateId] = useState<string>(() => storageService.getActiveTemplateId());
   const [config, setConfig] = useState(() => storageService.getConfig());
   const [history, setHistory] = useState<HistoryItem[]>(() => storageService.getHistory());
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => storageService.getTheme() === 'dark');
+  const [scheduledDispatch, setScheduledDispatch] = useState<ScheduledDispatch | null>(() =>
+    storageService.getSchedule()
+  );
+
+  // Sync dark mode class with html element and storage
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    storageService.saveTheme(isDarkMode ? 'dark' : 'light');
+  }, [isDarkMode]);
 
   // Active Template derived content
   const activeTemplate = useMemo(
@@ -297,6 +313,110 @@ export default function App() {
     setHistory(storageService.getHistory());
   };
 
+  // Audio chime notification for when scheduled dispatch starts
+  const playChime = () => {
+    try {
+      const AudioContextClass =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextClass) return;
+      const ctx = new AudioContextClass();
+      const now = ctx.currentTime;
+
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(587.33, now); // D5
+      gain1.gain.setValueAtTime(0.2, now);
+      gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.4);
+
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(880, now + 0.12); // A5
+      gain2.gain.setValueAtTime(0.25, now + 0.12);
+      gain2.gain.exponentialRampToValueAtTime(0.01, now + 0.6);
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      osc2.start(now + 0.12);
+      osc2.stop(now + 0.6);
+    } catch {
+      // Audio playback might be restricted
+    }
+  };
+
+  // Schedule dispatch actions
+  const handleScheduleDispatch = (params: {
+    targetTimestamp: number;
+    targetTimeString: string;
+    targetDateString: string;
+    examName: string;
+  }) => {
+    const targetItems =
+      selectedGroup === 'all'
+        ? matchedItems
+        : matchedItems.filter((i) => (i.student.group || 'Genel') === selectedGroup);
+    const readyCount = targetItems.filter((i) => i.status === 'ready').length;
+
+    const newSchedule: ScheduledDispatch = {
+      id: String(Date.now()),
+      targetTimestamp: params.targetTimestamp,
+      targetTimeString: params.targetTimeString,
+      targetDateString: params.targetDateString,
+      examName: params.examName,
+      selectedGroup,
+      studentCount: readyCount,
+      createdAt: Date.now(),
+    };
+
+    setScheduledDispatch(newSchedule);
+    storageService.saveSchedule(newSchedule);
+  };
+
+  const handleCancelSchedule = () => {
+    setScheduledDispatch(null);
+    storageService.saveSchedule(null);
+  };
+
+  const handleExecuteScheduleNow = () => {
+    if (!scheduledDispatch) return;
+    const examName = scheduledDispatch.examName;
+    setScheduledDispatch(null);
+    storageService.saveSchedule(null);
+    handleConfirmSend(examName);
+  };
+
+  // Monitor scheduled dispatch timer
+  useEffect(() => {
+    if (!scheduledDispatch) return;
+
+    const checkSchedule = () => {
+      const now = Date.now();
+      if (now >= scheduledDispatch.targetTimestamp) {
+        playChime();
+        const targetExam = scheduledDispatch.examName;
+        const targetGroup = scheduledDispatch.selectedGroup;
+
+        if (targetGroup && targetGroup !== selectedGroup) {
+          setSelectedGroup(targetGroup);
+        }
+
+        setScheduledDispatch(null);
+        storageService.saveSchedule(null);
+
+        handleConfirmSend(targetExam);
+      }
+    };
+
+    checkSchedule();
+    const interval = setInterval(checkSchedule, 1000);
+    return () => clearInterval(interval);
+  }, [scheduledDispatch, selectedGroup]);
+
   // 5. Retry Single Item
   const handleRetrySingleItem = async (item: MatchedItem) => {
     if (whatsAppStatus.state !== 'connected') {
@@ -395,7 +515,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#fbfbfb] text-[#1c1c1c] flex flex-col font-sans">
+    <div className="min-h-screen bg-[#fbfbfb] dark:bg-[#0b0d11] text-[#1c1c1c] dark:text-[#ededed] flex flex-col font-sans transition-colors duration-150">
       {/* Top Header */}
       <Header
         status={whatsAppStatus}
@@ -405,6 +525,8 @@ export default function App() {
         isMockMode={isMockMode}
         onToggleMockMode={() => setIsMockMode(!isMockMode)}
         onOpenTestModal={() => setIsTestModalOpen(true)}
+        isDarkMode={isDarkMode}
+        onToggleDarkMode={() => setIsDarkMode((prev) => !prev)}
       />
 
       {/* Tabs */}
@@ -418,6 +540,15 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-6xl w-full mx-auto px-6 py-6">
+        {/* Active Schedule Notification Banner */}
+        {scheduledDispatch && (
+          <ScheduleBanner
+            schedule={scheduledDispatch}
+            onExecuteNow={handleExecuteScheduleNow}
+            onCancelSchedule={handleCancelSchedule}
+          />
+        )}
+
         {activeTab === 'send' && (
           <div>
             {/* Folder Picker */}
@@ -513,6 +644,7 @@ export default function App() {
         isOpen={isConfirmOpen}
         onClose={() => setIsConfirmOpen(false)}
         onConfirm={handleConfirmSend}
+        onSchedule={handleScheduleDispatch}
         matchedItems={
           selectedGroup === 'all'
             ? matchedItems

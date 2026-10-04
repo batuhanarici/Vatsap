@@ -7,13 +7,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
-  ExternalLink,
   ZoomIn,
   ZoomOut,
-  Maximize2,
   CheckCircle2,
-  AlertCircle,
-  FileText,
   User,
   Phone,
   GraduationCap,
@@ -109,7 +105,7 @@ export const PdfPreviewModal: React.FC<PdfPreviewModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-3 sm:p-6 animate-in fade-in duration-150">
-      <div className="bg-white border border-neutral-200 rounded-xl shadow-2xl w-full max-w-5xl h-[92vh] flex flex-col overflow-hidden">
+      <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl shadow-2xl w-full max-w-5xl h-[92vh] flex flex-col overflow-hidden text-neutral-900 dark:text-neutral-100 transition-colors">
         {/* Top Control Bar */}
         <div className="px-5 py-3.5 bg-neutral-900 text-white flex flex-wrap items-center justify-between gap-3 border-b border-neutral-800 shrink-0">
           <div className="flex items-center gap-3">
@@ -147,7 +143,7 @@ export const PdfPreviewModal: React.FC<PdfPreviewModalProps> = ({
                 <button
                   onClick={handlePrev}
                   disabled={currentIndex <= 0}
-                  className="p-1.5 text-neutral-300 hover:text-white disabled:opacity-30 disabled:hover:text-neutral-300 transition-colors"
+                  className="p-1.5 text-neutral-300 hover:text-white disabled:opacity-30 disabled:hover:text-neutral-300 transition-colors cursor-pointer"
                   title="Önceki Öğrenci (Sol Ok)"
                 >
                   <ChevronLeft className="w-4 h-4" />
@@ -158,7 +154,7 @@ export const PdfPreviewModal: React.FC<PdfPreviewModalProps> = ({
                 <button
                   onClick={handleNext}
                   disabled={currentIndex >= validItems.length - 1}
-                  className="p-1.5 text-neutral-300 hover:text-white disabled:opacity-30 disabled:hover:text-neutral-300 transition-colors"
+                  className="p-1.5 text-neutral-300 hover:text-white disabled:opacity-30 disabled:hover:text-neutral-300 transition-colors cursor-pointer"
                   title="Sonraki Öğrenci (Sağ Ok)"
                 >
                   <ChevronRight className="w-4 h-4" />
@@ -171,7 +167,7 @@ export const PdfPreviewModal: React.FC<PdfPreviewModalProps> = ({
               <div className="hidden sm:flex items-center bg-neutral-800 rounded-lg p-0.5 border border-neutral-700 text-xs">
                 <button
                   onClick={() => setZoom((z) => Math.max(70, z - 10))}
-                  className="p-1.5 text-neutral-300 hover:text-white"
+                  className="p-1.5 text-neutral-300 hover:text-white cursor-pointer"
                   title="Küçült"
                 >
                   <ZoomOut className="w-3.5 h-3.5" />
@@ -179,7 +175,7 @@ export const PdfPreviewModal: React.FC<PdfPreviewModalProps> = ({
                 <span className="px-2 text-[11px] text-neutral-300 font-mono">{zoom}%</span>
                 <button
                   onClick={() => setZoom((z) => Math.min(150, z + 10))}
-                  className="p-1.5 text-neutral-300 hover:text-white"
+                  className="p-1.5 text-neutral-300 hover:text-white cursor-pointer"
                   title="Büyüt"
                 >
                   <ZoomIn className="w-3.5 h-3.5" />
@@ -190,7 +186,7 @@ export const PdfPreviewModal: React.FC<PdfPreviewModalProps> = ({
             {objectUrl && (
               <button
                 onClick={handleDownload}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-white rounded-lg text-xs font-medium border border-neutral-700 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-white rounded-lg text-xs font-medium border border-neutral-700 transition-colors cursor-pointer"
                 title="PDF'i İndir"
               >
                 <Download className="w-3.5 h-3.5" />
@@ -200,7 +196,7 @@ export const PdfPreviewModal: React.FC<PdfPreviewModalProps> = ({
 
             <button
               onClick={onClose}
-              className="p-1.5 bg-neutral-800 hover:bg-rose-900/60 hover:text-rose-200 text-neutral-400 rounded-lg transition-colors ml-1"
+              className="p-1.5 bg-neutral-800 hover:bg-rose-900/60 hover:text-rose-200 text-neutral-400 rounded-lg transition-colors ml-1 cursor-pointer"
               title="Kapat (ESC)"
             >
               <X className="w-4 h-4" />
@@ -209,29 +205,29 @@ export const PdfPreviewModal: React.FC<PdfPreviewModalProps> = ({
         </div>
 
         {/* Sub-header File Info Bar */}
-        <div className="px-5 py-2 bg-neutral-100 border-b border-neutral-200 flex items-center justify-between text-xs text-neutral-600 shrink-0">
+        <div className="px-5 py-2 bg-neutral-100 dark:bg-neutral-800 border-b border-neutral-200 dark:border-neutral-700 flex items-center justify-between text-xs text-neutral-600 dark:text-neutral-300 shrink-0">
           <div className="flex items-center gap-2 truncate">
-            <span className="font-semibold text-neutral-700">Eşleşen Dosya:</span>
-            <code className="bg-white px-2 py-0.5 rounded border border-neutral-200 font-mono text-neutral-900 truncate">
+            <span className="font-semibold text-neutral-700 dark:text-neutral-200">Eşleşen Dosya:</span>
+            <code className="bg-white dark:bg-neutral-900 px-2 py-0.5 rounded border border-neutral-200 dark:border-neutral-700 font-mono text-neutral-900 dark:text-neutral-100 truncate">
               {currentItem.pdfFile?.name}
             </code>
             {currentItem.pdfFile?.size && (
-              <span className="text-neutral-400 font-mono text-[11px]">
+              <span className="text-neutral-400 dark:text-neutral-500 font-mono text-[11px]">
                 ({Math.round(currentItem.pdfFile.size / 1024)} KB)
               </span>
             )}
           </div>
 
-          <div className="text-[11px] text-neutral-500 hidden md:block">
-            İpucu: Klavyedeki <kbd className="px-1.5 py-0.5 bg-white border border-neutral-300 rounded font-mono text-[10px]">←</kbd> ve <kbd className="px-1.5 py-0.5 bg-white border border-neutral-300 rounded font-mono text-[10px]">→</kbd> tuşlarıyla öğrenciler arasında geçiş yapabilirsiniz.
+          <div className="text-[11px] text-neutral-500 dark:text-neutral-400 hidden md:block">
+            İpucu: Klavyedeki <kbd className="px-1.5 py-0.5 bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded font-mono text-[10px]">←</kbd> ve <kbd className="px-1.5 py-0.5 bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded font-mono text-[10px]">→</kbd> tuşlarıyla geçiş yapabilirsiniz.
           </div>
         </div>
 
         {/* Main Preview Container */}
-        <div className="flex-1 bg-neutral-200/70 p-4 sm:p-6 overflow-auto flex items-center justify-center">
+        <div className="flex-1 bg-neutral-200/70 dark:bg-neutral-950 p-4 sm:p-6 overflow-auto flex items-center justify-center">
           {objectUrl ? (
             /* Real PDF Viewer */
-            <div className="w-full h-full bg-white rounded-lg shadow-md border border-neutral-300 overflow-hidden">
+            <div className="w-full h-full bg-white rounded-lg shadow-md border border-neutral-300 dark:border-neutral-700 overflow-hidden">
               <iframe
                 src={`${objectUrl}#toolbar=1&navpanes=0`}
                 title={`Karne - ${currentItem.student.studentName}`}
@@ -239,7 +235,7 @@ export const PdfPreviewModal: React.FC<PdfPreviewModalProps> = ({
               />
             </div>
           ) : (
-            /* High-fidelity Realistic Report Card Simulation (When real File binary isn't attached yet) */
+            /* High-fidelity Realistic Report Card Simulation */
             <div
               style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'top center' }}
               className="bg-white w-full max-w-2xl min-h-[620px] rounded-lg shadow-xl border border-neutral-300 p-8 text-neutral-900 transition-transform duration-100 flex flex-col justify-between"
@@ -374,17 +370,17 @@ export const PdfPreviewModal: React.FC<PdfPreviewModalProps> = ({
         </div>
 
         {/* Footer Status Bar */}
-        <div className="px-5 py-3 bg-white border-t border-neutral-200 flex items-center justify-between text-xs">
+        <div className="px-5 py-3 bg-white dark:bg-neutral-900 border-t border-neutral-200 dark:border-neutral-800 flex items-center justify-between text-xs">
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-            <span className="font-medium text-neutral-800">
+            <span className="font-medium text-neutral-800 dark:text-neutral-200">
               Bu karne <strong>{currentItem.student.studentName}</strong> öğrencisi ile eşleştirildi.
             </span>
           </div>
 
           <button
             onClick={onClose}
-            className="px-4 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-white rounded font-medium text-xs transition-colors cursor-pointer"
+            className="px-4 py-1.5 bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 hover:bg-neutral-800 dark:hover:bg-neutral-100 rounded-lg font-medium text-xs transition-colors cursor-pointer"
           >
             Tamam, Kapat
           </button>

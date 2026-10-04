@@ -12,7 +12,6 @@ import {
   Send,
   FileCheck,
   MessageSquare,
-  Eye,
   Sparkles,
   ScanText,
 } from 'lucide-react';
@@ -88,7 +87,7 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
     // If currently sending or sent
     if (item.sendingStatus === 'sending_message' || item.sendingStatus === 'sending_pdf') {
       return (
-        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-neutral-100 text-neutral-800 border border-neutral-200">
+        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-neutral-100 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border border-neutral-200 dark:border-neutral-700">
           <RefreshCw className="w-3 h-3 animate-spin text-neutral-500" />
           <span>{item.sendingStatus === 'sending_message' ? 'Mesaj Gönderiliyor' : 'PDF Gönderiliyor'}</span>
         </span>
@@ -97,8 +96,8 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
 
     if (item.sendingStatus === 'success') {
       return (
-        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 text-emerald-800 border border-emerald-200">
-          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+          <CheckCircle2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
           <span>Tamamlandı</span>
         </span>
       );
@@ -107,13 +106,13 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
     if (item.sendingStatus === 'failed') {
       return (
         <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-rose-50 text-rose-800 border border-rose-200">
-            <AlertCircle className="w-3 h-3 text-rose-600" />
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-rose-50 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+            <AlertCircle className="w-3 h-3 text-rose-600 dark:text-rose-400" />
             <span>Hata</span>
           </span>
           <button
             onClick={() => onRetrySingleItem(item)}
-            className="text-[11px] underline text-neutral-600 hover:text-neutral-900"
+            className="text-[11px] underline text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-200 cursor-pointer"
           >
             Tekrar Dene
           </button>
@@ -125,22 +124,22 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
     switch (item.status) {
       case 'ready':
         return (
-          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-neutral-100 text-neutral-700 border border-neutral-200">
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-700">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
             <span>Hazır</span>
           </span>
         );
       case 'missing_pdf':
         return (
-          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-neutral-50 text-neutral-500 border border-neutral-200">
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-neutral-50 dark:bg-neutral-800/40 text-neutral-500 dark:text-neutral-400 border border-neutral-200 dark:border-neutral-700">
             <AlertTriangle className="w-3 h-3 text-neutral-400" />
             <span>PDF bulunamadı</span>
           </span>
         );
       case 'invalid_phone':
         return (
-          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-800 border border-amber-200">
-            <AlertCircle className="w-3 h-3 text-amber-600" />
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+            <AlertCircle className="w-3 h-3 text-amber-600 dark:text-amber-400" />
             <span>Geçersiz numara</span>
           </span>
         );
@@ -148,18 +147,18 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
   };
 
   return (
-    <div className="bg-white border border-neutral-200 rounded-lg overflow-hidden shadow-2xs">
+    <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg overflow-hidden shadow-2xs transition-colors">
       {/* Top Template Selection Toolbar */}
-      <div className="px-4 py-2.5 bg-neutral-50/90 border-b border-neutral-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 text-xs">
+      <div className="px-4 py-2.5 bg-neutral-50/90 dark:bg-neutral-800/50 border-b border-neutral-200 dark:border-neutral-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 text-xs">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-neutral-600 font-medium flex items-center gap-1.5 shrink-0">
-            <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
+          <span className="text-neutral-600 dark:text-neutral-400 font-medium flex items-center gap-1.5 shrink-0">
+            <MessageSquare className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
             <span>Mesaj Şablonu:</span>
           </span>
           <select
             value={activeTemplateId}
             onChange={(e) => onSelectTemplate(e.target.value)}
-            className="px-2.5 py-1 bg-white border border-neutral-300 rounded font-medium text-neutral-800 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-hidden shadow-2xs"
+            className="px-2.5 py-1 bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded font-medium text-neutral-800 dark:text-neutral-200 text-xs focus:ring-1 focus:ring-neutral-900 dark:focus:ring-neutral-400 focus:outline-hidden shadow-2xs"
           >
             {templates.map((tmpl) => (
               <option key={tmpl.id} value={tmpl.id}>
@@ -168,14 +167,14 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
             ))}
           </select>
           {selectedTemplate?.tag && (
-            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
               {selectedTemplate.tag}
             </span>
           )}
         </div>
         {selectedTemplate && (
           <span
-            className="text-[11px] text-neutral-500 italic truncate max-w-sm hidden md:inline-block"
+            className="text-[11px] text-neutral-500 dark:text-neutral-400 italic truncate max-w-sm hidden md:inline-block"
             title={formatMessage(
               selectedTemplate.content,
               { id: 'p', studentName: 'Ahmet', parentName: 'Mehmet Bey', phone: '' },
@@ -197,8 +196,8 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
 
       {/* Class / Group Filter Toolbar */}
       {availableGroups.length > 0 && (
-        <div className="px-4 py-2 bg-neutral-100/80 border-b border-neutral-200 flex items-center gap-1.5 flex-wrap text-xs">
-          <span className="text-neutral-600 font-semibold flex items-center gap-1 mr-1">
+        <div className="px-4 py-2 bg-neutral-100/80 dark:bg-neutral-800/40 border-b border-neutral-200 dark:border-neutral-800 flex items-center gap-1.5 flex-wrap text-xs">
+          <span className="text-neutral-600 dark:text-neutral-400 font-semibold flex items-center gap-1 mr-1">
             <span>🎯 Sınıf / Şube Seçimi:</span>
           </span>
           <button
@@ -206,8 +205,8 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
             onClick={() => handleGroupChange('all')}
             className={`px-2.5 py-1 rounded text-xs transition-all cursor-pointer ${
               currentGroup === 'all'
-                ? 'bg-neutral-900 text-white font-semibold shadow-2xs'
-                : 'bg-white text-neutral-700 hover:bg-neutral-50 border border-neutral-200'
+                ? 'bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 font-semibold shadow-2xs'
+                : 'bg-white dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-700 border border-neutral-200 dark:border-neutral-700'
             }`}
           >
             Tüm Sınıflar ({matchedItems.length})
@@ -224,13 +223,13 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
                 className={`px-2.5 py-1 rounded text-xs transition-all cursor-pointer flex items-center gap-1.5 ${
                   isSelected
                     ? 'bg-indigo-600 text-white font-semibold shadow-2xs ring-1 ring-indigo-700'
-                    : 'bg-white text-neutral-700 hover:bg-neutral-50 border border-neutral-200'
+                    : 'bg-white dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-700 border border-neutral-200 dark:border-neutral-700'
                 }`}
               >
                 <span>{g}</span>
                 <span
                   className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
-                    isSelected ? 'bg-indigo-700 text-white' : 'bg-neutral-100 text-neutral-600'
+                    isSelected ? 'bg-indigo-700 text-white' : 'bg-neutral-100 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300'
                   }`}
                   title={`${groupReady}/${groupTotal} öğrenci hazır`}
                 >
@@ -244,23 +243,23 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
 
       {/* OCR / Smart Content Matching Bar */}
       {missingCount > 0 && hasFolderSelected && onStartOcrScan && (
-        <div className="px-4 py-3 bg-indigo-50/90 border-b border-indigo-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+        <div className="px-4 py-3 bg-indigo-50/90 dark:bg-indigo-950/40 border-b border-indigo-100 dark:border-indigo-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
           <div className="flex items-start gap-2.5">
-            <div className="p-1.5 bg-indigo-100 text-indigo-700 rounded-md border border-indigo-200 shrink-0 mt-0.5">
+            <div className="p-1.5 bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 rounded-md border border-indigo-200 dark:border-indigo-800 shrink-0 mt-0.5">
               <ScanText className="w-4 h-4" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-semibold text-indigo-950">
+                <span className="font-semibold text-indigo-950 dark:text-indigo-200">
                   {missingCount} öğrenci için dosya adı eşleşmedi
                 </span>
                 {unassignedPdfCount > 0 && (
-                  <span className="text-[10px] bg-indigo-200/70 text-indigo-800 font-mono px-1.5 py-0.2 rounded font-semibold">
+                  <span className="text-[10px] bg-indigo-200/70 dark:bg-indigo-900 text-indigo-800 dark:text-indigo-200 font-mono px-1.5 py-0.2 rounded font-semibold">
                     {unassignedPdfCount} boşta PDF var
                   </span>
                 )}
               </div>
-              <p className="text-[11px] text-indigo-800/90 mt-0.5">
+              <p className="text-[11px] text-indigo-800/90 dark:text-indigo-300/80 mt-0.5">
                 Dosya adları <code>scan_001.pdf</code> gibi genel veya numaralı olsa bile, akıllı metin analizi ile PDF&apos;lerin ilk sayfalarındaki öğrenci adını okuyarak eşleştirebilirsiniz.
               </p>
             </div>
@@ -278,14 +277,12 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
             {isOcrScanning ? (
               <>
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>
-                  Taranıyor {ocrProgress ? `(${ocrProgress.current}/${ocrProgress.total})` : ''}...
-                </span>
+                <span>PDF Metinleri Taranıyor...</span>
               </>
             ) : (
               <>
-                <Sparkles className="w-3.5 h-3.5 text-indigo-200" />
-                <span>PDF İçinden İsim Oku (OCR)</span>
+                <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                <span>PDF İçi İsimleri Otomatik Eşleştir</span>
               </>
             )}
           </button>
@@ -294,11 +291,11 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
 
       {/* Real-time OCR scan progress status bar */}
       {isOcrScanning && ocrProgress && (
-        <div className="px-4 py-2 bg-indigo-100/70 border-b border-indigo-200 flex items-center justify-between text-[11px] text-indigo-900 animate-pulse">
+        <div className="px-4 py-2 bg-indigo-100/70 dark:bg-indigo-900/40 border-b border-indigo-200 dark:border-indigo-800 flex items-center justify-between text-[11px] text-indigo-900 dark:text-indigo-200 animate-pulse">
           <div className="flex items-center gap-2">
             <span className="font-mono">📄 {ocrProgress.currentFileName}</span>
             {ocrProgress.detectedStudentName && (
-              <span className="font-semibold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded">
+              <span className="font-semibold text-emerald-800 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950 px-2 py-0.5 rounded">
                 ✓ Tespit Edildi: {ocrProgress.detectedStudentName}
               </span>
             )}
@@ -311,7 +308,7 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
       <div className="overflow-x-auto">
         <table className="w-full text-left text-xs border-collapse">
           <thead>
-            <tr className="bg-neutral-50 border-b border-neutral-200 text-neutral-500 font-medium">
+            <tr className="bg-neutral-50 dark:bg-neutral-800/80 border-b border-neutral-200 dark:border-neutral-800 text-neutral-500 dark:text-neutral-400 font-medium">
               <th className="py-2.5 px-4 font-semibold">Öğrenci</th>
               <th className="py-2.5 px-4 font-semibold">Sınıf / Şube</th>
               <th className="py-2.5 px-4 font-semibold">Veli</th>
@@ -321,10 +318,10 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
               <th className="py-2.5 px-4 font-semibold text-right">Karne Önizle</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-neutral-100 text-neutral-800">
+          <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800 text-neutral-800 dark:text-neutral-200">
             {displayedItems.length === 0 ? (
               <tr>
-                <td colSpan={7} className="py-8 text-center text-neutral-400">
+                <td colSpan={7} className="py-8 text-center text-neutral-400 dark:text-neutral-500">
                   {currentGroup !== 'all'
                     ? `"${currentGroup}" sınıfında kayıtlı öğrenci bulunmuyor.`
                     : 'Kayıtlı öğrenci bulunmuyor. Lütfen "Öğrenciler" sekmesinden öğrenci ekleyin.'}
@@ -334,22 +331,22 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
               displayedItems.map((item) => (
                 <tr
                   key={item.id}
-                  className={`hover:bg-neutral-50/70 transition-colors ${
+                  className={`hover:bg-neutral-50/70 dark:hover:bg-neutral-800/40 transition-colors ${
                     item.status === 'missing_pdf' ? 'opacity-80' : ''
                   }`}
                 >
-                  <td className="py-3 px-4 font-medium text-neutral-900">
+                  <td className="py-3 px-4 font-semibold text-neutral-900 dark:text-white">
                     {item.student.studentName}
                   </td>
                   <td className="py-3 px-4">
-                    <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 font-mono">
+                    <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-mono">
                       {item.student.group || 'Genel'}
                     </span>
                   </td>
-                  <td className="py-3 px-4 text-neutral-600">
+                  <td className="py-3 px-4 text-neutral-600 dark:text-neutral-400">
                     {item.student.parentName}
                   </td>
-                  <td className="py-3 px-4 font-mono text-neutral-600">
+                  <td className="py-3 px-4 font-mono text-neutral-600 dark:text-neutral-400">
                     {formatPhoneDisplay(item.student.phone)}
                   </td>
                   <td className="py-3 px-4">
@@ -358,46 +355,37 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
                         <button
                           type="button"
                           onClick={() => onPreviewItem(item)}
-                          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 text-neutral-800 font-mono text-[11px] transition-colors cursor-pointer group text-left"
+                          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 border border-neutral-200 dark:border-neutral-700 text-neutral-800 dark:text-neutral-200 font-mono text-[11px] transition-colors cursor-pointer group text-left"
                           title="Karnenin ayrıntılı önizlemesine bakmak için tıklayın"
                         >
-                          <FileCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                          <FileCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                           <span className="truncate max-w-[190px] group-hover:underline">
                             {item.pdfFile.name}
                           </span>
                         </button>
                         {item.matchMethod === 'content_ocr' && (
-                          <div className="flex items-center gap-1 text-[10px] text-indigo-700 font-semibold bg-indigo-50/80 px-1.5 py-0.5 rounded border border-indigo-200 w-fit">
+                          <div className="flex items-center gap-1 text-[10px] text-indigo-700 dark:text-indigo-300 font-semibold bg-indigo-50/80 dark:bg-indigo-950/60 px-1.5 py-0.5 rounded border border-indigo-200 dark:border-indigo-800 w-fit">
                             <Sparkles className="w-3 h-3 text-indigo-500 shrink-0" />
                             <span>PDF İçi Metinden Okundu</span>
                           </div>
                         )}
                       </div>
                     ) : (
-                      <span className="text-neutral-400 font-mono text-[11px]">—</span>
+                      <span className="text-neutral-400 dark:text-neutral-500 font-mono text-[11px]">—</span>
                     )}
                   </td>
-                  <td className="py-3 px-4">
-                    {getStatusBadge(item)}
-                    {item.errorMessage && (
-                      <p className="text-[11px] text-rose-600 mt-1 max-w-[200px]">
-                        {item.errorMessage}
-                      </p>
-                    )}
-                  </td>
+                  <td className="py-3 px-4">{getStatusBadge(item)}</td>
                   <td className="py-3 px-4 text-right">
                     {item.pdfFile ? (
                       <button
                         type="button"
                         onClick={() => onPreviewItem(item)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-neutral-100 hover:bg-emerald-50 text-neutral-800 hover:text-emerald-900 border border-neutral-300 hover:border-emerald-300 text-xs font-semibold transition-all shadow-2xs cursor-pointer"
-                        title="Göndermeden önce bu öğrencinin karnesini inceleyin"
+                        className="px-2.5 py-1 rounded border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 text-[11px] font-medium transition-colors cursor-pointer"
                       >
-                        <Eye className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>İncele</span>
+                        Önizle
                       </button>
                     ) : (
-                      <span className="text-neutral-300 text-xs font-mono">—</span>
+                      <span className="text-[11px] text-neutral-400 dark:text-neutral-500">—</span>
                     )}
                   </td>
                 </tr>
@@ -408,23 +396,23 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
       </div>
 
       {/* Bottom Summary Bar */}
-      <div className="p-4 bg-neutral-50 border-t border-neutral-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+      <div className="p-4 bg-neutral-50 dark:bg-neutral-800/50 border-t border-neutral-200 dark:border-neutral-800 flex flex-col sm:flex-row items-center justify-between gap-4">
         <div className="flex items-center gap-4 text-xs">
           <div>
-            <span className="font-semibold text-neutral-900">{readyCount}</span> hazır
+            <span className="font-semibold text-neutral-900 dark:text-white font-mono">{readyCount}</span> hazır
             {missingCount > 0 && (
-              <span className="text-neutral-500 ml-2">
-                • <span className="font-semibold text-neutral-700">{missingCount}</span> eksik
+              <span className="text-neutral-500 dark:text-neutral-400 ml-2">
+                • <span className="font-semibold text-neutral-700 dark:text-neutral-300 font-mono">{missingCount}</span> eksik
               </span>
             )}
             {invalidPhoneCount > 0 && (
-              <span className="text-amber-700 ml-2">
-                • <span className="font-semibold">{invalidPhoneCount}</span> geçersiz telefon
+              <span className="text-amber-700 dark:text-amber-400 ml-2">
+                • <span className="font-semibold font-mono">{invalidPhoneCount}</span> geçersiz telefon
               </span>
             )}
           </div>
-          <div className="h-3 w-px bg-neutral-200"></div>
-          <div className="flex items-center gap-1.5 text-neutral-600">
+          <div className="h-3 w-px bg-neutral-200 dark:bg-neutral-700"></div>
+          <div className="flex items-center gap-1.5 text-neutral-600 dark:text-neutral-400">
             <span
               className={`w-2 h-2 rounded-full ${
                 isConnected ? 'bg-emerald-500' : 'bg-neutral-400'
@@ -436,17 +424,17 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
 
         <div className="flex items-center gap-3">
           {!hasFolderSelected && (
-            <span className="text-[11px] text-neutral-500">
+            <span className="text-[11px] text-neutral-500 dark:text-neutral-400">
               Gönderim için lütfen önce PDF klasörü seçin.
             </span>
           )}
           <button
             onClick={onStartBatchSend}
             disabled={!canSend}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded text-xs font-semibold shadow-xs transition-colors ${
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-xs font-semibold shadow-xs transition-all ${
               canSend
-                ? 'bg-neutral-900 text-white hover:bg-neutral-800 cursor-pointer'
-                : 'bg-neutral-200 text-neutral-400 cursor-not-allowed'
+                ? 'bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 hover:bg-neutral-800 dark:hover:bg-neutral-100 cursor-pointer active:scale-98'
+                : 'bg-neutral-200 dark:bg-neutral-800 text-neutral-400 dark:text-neutral-600 cursor-not-allowed'
             }`}
           >
             <Send className="w-3.5 h-3.5" />

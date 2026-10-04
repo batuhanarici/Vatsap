@@ -71,15 +71,15 @@ export const StudentModal: React.FC<StudentModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
-      <div className="bg-white border border-neutral-200 rounded-lg shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-200 bg-neutral-50/50">
-          <h2 className="text-sm font-semibold text-neutral-900">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
+      <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-neutral-900 dark:text-neutral-100 transition-colors">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-800/50">
+          <h2 className="text-sm font-semibold text-neutral-900 dark:text-white">
             {studentToEdit ? 'Öğrenciyi Düzenle' : 'Yeni Öğrenci Ekle'}
           </h2>
           <button
             onClick={onClose}
-            className="p-1 rounded text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition-colors"
+            className="p-1 rounded text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
@@ -87,13 +87,13 @@ export const StudentModal: React.FC<StudentModalProps> = ({
 
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           {error && (
-            <div className="p-2.5 rounded bg-rose-50 border border-rose-200 text-xs text-rose-700">
+            <div className="p-2.5 rounded bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300">
               {error}
             </div>
           )}
 
           <div>
-            <label className="block text-xs font-medium text-neutral-700 mb-1">
+            <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1">
               Öğrenci Adı Soyadı
             </label>
             <input
@@ -102,16 +102,16 @@ export const StudentModal: React.FC<StudentModalProps> = ({
               value={studentName}
               onChange={(e) => setStudentName(e.target.value)}
               placeholder="Örn: Ahmet Yılmaz"
-              className="w-full px-3 py-2 border border-neutral-300 rounded text-xs text-neutral-900 focus:outline-hidden focus:ring-1 focus:ring-neutral-900"
+              className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg text-xs text-neutral-900 dark:text-neutral-100 bg-white dark:bg-neutral-800 focus:outline-hidden focus:ring-1 focus:ring-neutral-900 dark:focus:ring-neutral-400"
             />
           </div>
 
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="block text-xs font-medium text-neutral-700">
+              <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300">
                 Sınıf / Şube / Grup
               </label>
-              <span className="text-[10px] text-neutral-400">
+              <span className="text-[10px] text-neutral-400 dark:text-neutral-500">
                 (İsteğe bağlı, örn: 8-A)
               </span>
             </div>
@@ -120,16 +120,16 @@ export const StudentModal: React.FC<StudentModalProps> = ({
               value={group}
               onChange={(e) => setGroup(e.target.value)}
               placeholder="Örn: 8-A veya 12-Sayısal"
-              className="w-full px-3 py-2 border border-neutral-300 rounded text-xs text-neutral-900 focus:outline-hidden focus:ring-1 focus:ring-neutral-900"
+              className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg text-xs text-neutral-900 dark:text-neutral-100 bg-white dark:bg-neutral-800 focus:outline-hidden focus:ring-1 focus:ring-neutral-900 dark:focus:ring-neutral-400"
             />
             <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-              <span className="text-[10px] text-neutral-400">Hızlı seçim:</span>
+              <span className="text-[10px] text-neutral-400 dark:text-neutral-500">Hızlı seçim:</span>
               {['8-A', '8-B', '12-Sayısal', '12-EA', 'Hafta Sonu Grubu'].map((s) => (
                 <button
                   key={s}
                   type="button"
                   onClick={() => setGroup(s)}
-                  className="px-2 py-0.5 rounded text-[10px] font-medium bg-neutral-100 hover:bg-neutral-200 text-neutral-700 border border-neutral-200 cursor-pointer transition-colors"
+                  className="px-2 py-0.5 rounded text-[10px] font-medium bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-700 cursor-pointer transition-colors"
                 >
                   {s}
                 </button>
@@ -138,7 +138,7 @@ export const StudentModal: React.FC<StudentModalProps> = ({
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-neutral-700 mb-1">
+            <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1">
               Veli Adı Soyadı
             </label>
             <input
@@ -147,12 +147,12 @@ export const StudentModal: React.FC<StudentModalProps> = ({
               value={parentName}
               onChange={(e) => setParentName(e.target.value)}
               placeholder="Örn: Mehmet Yılmaz"
-              className="w-full px-3 py-2 border border-neutral-300 rounded text-xs text-neutral-900 focus:outline-hidden focus:ring-1 focus:ring-neutral-900"
+              className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg text-xs text-neutral-900 dark:text-neutral-100 bg-white dark:bg-neutral-800 focus:outline-hidden focus:ring-1 focus:ring-neutral-900 dark:focus:ring-neutral-400"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-neutral-700 mb-1">
+            <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1">
               WhatsApp Telefon Numarası
             </label>
             <input
@@ -161,26 +161,26 @@ export const StudentModal: React.FC<StudentModalProps> = ({
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               placeholder="Örn: 0532 111 22 33"
-              className="w-full px-3 py-2 border border-neutral-300 rounded text-xs font-mono text-neutral-900 focus:outline-hidden focus:ring-1 focus:ring-neutral-900"
+              className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg text-xs font-mono text-neutral-900 dark:text-neutral-100 bg-white dark:bg-neutral-800 focus:outline-hidden focus:ring-1 focus:ring-neutral-900 dark:focus:ring-neutral-400"
             />
             {phone && (
-              <p className="text-[11px] text-neutral-500 mt-1 font-mono">
+              <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-1 font-mono">
                 Formatlanan: {formatPhoneDisplay(phone)}
               </p>
             )}
           </div>
 
-          <div className="pt-3 border-t border-neutral-100 flex items-center justify-end gap-2">
+          <div className="pt-3 border-t border-neutral-100 dark:border-neutral-800 flex items-center justify-end gap-2">
             <button
               type="button"
               onClick={onClose}
-              className="px-3 py-2 rounded text-xs font-medium text-neutral-600 hover:bg-neutral-100 transition-colors"
+              className="px-3.5 py-2 rounded-lg text-xs font-medium text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
             >
               Vazgeç
             </button>
             <button
               type="submit"
-              className="px-4 py-2 rounded bg-neutral-900 text-white text-xs font-medium hover:bg-neutral-800 transition-colors shadow-xs"
+              className="px-4 py-2 rounded-lg bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 text-xs font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-100 transition-colors shadow-xs cursor-pointer active:scale-98"
             >
               Kaydet
             </button>
