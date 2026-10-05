@@ -63,7 +63,7 @@ export const DEFAULT_CONFIG: OpenWAConfig & {
   schoolName: string;
 } = {
   providerType: 'whatsapp_web',
-  baseUrl: 'http://localhost:2785/api',
+  baseUrl: 'http://127.0.0.1:2785/api',
   apiKey: '',
   sessionId: 'default',
   autoStart: true,
