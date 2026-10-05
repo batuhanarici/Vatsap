@@ -14,17 +14,20 @@ export class OpenWAProvider implements WhatsAppProvider {
   }
 
   /**
-   * Sanitizes and standardizes the base URL.
+   * Cleans and normalizes the server base URL so it NEVER produces double slashes or double /api/api.
    * Examples:
    * - 'localhost:2785' -> 'http://localhost:2785'
    * - 'http://localhost:2785/' -> 'http://localhost:2785'
+   * - 'http://localhost:2785/api' -> 'http://localhost:2785'
+   * - 'http://localhost:2785/api/' -> 'http://localhost:2785'
    */
-  private get sanitizedBaseUrl(): string {
-    let url = (this.config.baseUrl || 'http://localhost:2785/api').trim();
+  private get cleanBaseUrl(): string {
+    let url = (this.config.baseUrl || 'http://localhost:2785').trim();
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       url = `http://${url}`;
     }
-    return url.replace(/\/+$/, '');
+    // Remove trailing /api and trailing slashes so all endpoints can cleanly append /api/...
+    return url.replace(/\/api\/?$/i, '').replace(/\/+$/, '');
   }
 
   private formatChatId(phone: string): string {
@@ -32,17 +35,10 @@ export class OpenWAProvider implements WhatsAppProvider {
     return `${cleanPhone}@c.us`;
   }
 
-  /**
-   * Performs an API request to OpenWA with proxy fallback for Mixed-Content and CORS bypass
-   */
-  private async request(path: string, options: RequestInit = {}): Promise<Response> {
-    const cleanPath = path.startsWith('/') ? path : `/${path}`;
-    const targetUrl = `${this.sanitizedBaseUrl}${cleanPath}`;
-
+  private get headers(): HeadersInit {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       Accept: 'application/json',
-      ...((options.headers as Record<string, string>) || {}),
     };
 
     if (this.config.apiKey) {
@@ -51,160 +47,162 @@ export class OpenWAProvider implements WhatsAppProvider {
       headers['Authorization'] = `Bearer ${this.config.apiKey}`;
     }
 
-    const isBrowser = typeof window !== 'undefined';
-    const isHttps = isBrowser && window.location.protocol === 'https:';
-    const isTargetHttp = targetUrl.startsWith('http://');
+    return headers;
+  }
 
-    // On an HTTPS website, direct HTTP requests to localhost/IP are blocked by Mixed Content.
-    // Use our server-side proxy route (/api/openwa-proxy) first.
-    if (isHttps && isTargetHttp) {
-      try {
-        const proxyUrl = `/api/openwa-proxy?url=${encodeURIComponent(targetUrl)}`;
-        const proxyRes = await fetch(proxyUrl, {
-          ...options,
-          headers,
-          signal: options.signal || AbortSignal.timeout(10000),
-        });
-        if (proxyRes.status !== 502) {
-          return proxyRes;
-        }
-      } catch {
-        // Fall back to direct fetch if proxy route isn't reachable
-      }
-    }
+  /**
+   * Direct fetch to OpenWA / WhatsApp REST API without invalid cloud proxies
+   */
+  private async request(path: string, options: RequestInit = {}): Promise<Response> {
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    const targetUrl = `${this.cleanBaseUrl}${cleanPath}`;
 
-    // Direct fetch (for HTTP environments, Electron, or HTTPS OpenWA targets)
     return fetch(targetUrl, {
       ...options,
-      headers,
-      signal: options.signal || AbortSignal.timeout(10000),
+      headers: {
+        ...this.headers,
+        ...((options.headers as Record<string, string>) || {}),
+      },
+      signal: options.signal || AbortSignal.timeout(8000),
     });
   }
 
   /**
-   * Checks the status of the current session on OpenWA.
-   * Resiliently tests both `/sessions/{id}` and `/api/sessions/{id}`.
+   * Checks the status of the current session on OpenWA or WPPConnect.
+   * Tests both OpenWA standard endpoint (/api/sessions/:id) and WPPConnect (/api/:id/status-session).
    */
   async getStatus(): Promise<WhatsAppStatus> {
     const sessionId = this.config.sessionId || 'default';
-    const candidatePaths = [
-      `/sessions/${sessionId}`,
-      `/api/sessions/${sessionId}`,
+
+    // Candidate 1: OpenWA standard (/api/sessions/default)
+    // Candidate 2: WPPConnect (/api/default/status-session)
+    const candidates = [
+      { path: `/api/sessions/${sessionId}`, type: 'openwa' as const },
+      { path: `/api/${sessionId}/status-session`, type: 'wppconnect' as const },
     ];
 
     let lastError: string | null = null;
-    let response: Response | null = null;
+    let isConnected = false;
+    let statusData: Record<string, unknown> | null = null;
+    let respondedCandidate: (typeof candidates)[number] | null = null;
 
-    for (const path of candidatePaths) {
+    for (const cand of candidates) {
       try {
-        response = await this.request(path, { method: 'GET' });
-        if (response.ok || response.status === 401 || response.status === 403 || response.status === 404) {
+        const res = await this.request(cand.path, { method: 'GET' });
+        if (res.ok) {
+          statusData = await res.json().catch(() => ({}));
+          respondedCandidate = cand;
+          isConnected = true;
           break;
+        }
+
+        if (res.status === 401 || res.status === 403) {
+          return {
+            state: 'error',
+            sessionId,
+            details: 'API Anahtarı Geçersiz: Girdiğiniz OpenWA API Key sunucu tarafından reddedildi.',
+          };
+        }
+
+        if (res.status === 404) {
+          // Candidate returned 404 (session doesn't exist yet on OpenWA)
+          // Try to create the session!
+          const created = await this.createSession();
+          if (created) {
+            await this.startSession();
+            return {
+              state: 'starting',
+              sessionId,
+              details: `"${sessionId}" oturumu oluşturuldu, başlatılıyor...`,
+            };
+          }
         }
       } catch (err: unknown) {
         lastError = err instanceof Error ? err.message : String(err);
       }
     }
 
-    if (!response) {
-      const isMixedContent =
-        typeof window !== 'undefined' &&
-        window.location.protocol === 'https:' &&
-        this.sanitizedBaseUrl.startsWith('http://');
+    if (!isConnected || !statusData) {
+      const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
+      const isLocalhost = this.cleanBaseUrl.includes('localhost') || this.cleanBaseUrl.includes('127.0.0.1');
+
+      if (isHttps && isLocalhost && lastError?.includes('Failed to fetch')) {
+        return {
+          state: 'disconnected',
+          sessionId,
+          details: `localhost:2785 sunucusuna bağlanılamadı. Docker/OpenWA servisinin bilgisayarınızda çalıştığından emin olun (Hata: ${lastError}).`,
+        };
+      }
 
       return {
         state: 'disconnected',
         sessionId,
-        details: isMixedContent
-          ? 'OpenWA servisine bağlanılamadı. (Sunucu kapalı olabilir veya yerel Docker servisiniz çalışmıyor).'
-          : `Sunucuya ulaşılamadı (${lastError || 'Bağlantı zaman aşımı'}). Docker veya OpenWA servisinizin çalıştığından emin olun.`,
+        details: lastError
+          ? `OpenWA servisine bağlanılamadı (${lastError}). Sunucunun (port 2785) açık olduğundan emin olun.`
+          : `"${sessionId}" oturumu bulunamadı. Lütfen "Oturum Başlat" butonuna tıklayın.`,
       };
     }
 
-    if (response.status === 401 || response.status === 403) {
+    // Determine state based on response
+    const statusRaw = String(
+      statusData.status || statusData.state || statusData.sessionStatus || ''
+    ).toLowerCase();
+
+    if (
+      statusRaw === 'ready' ||
+      statusRaw === 'connected' ||
+      statusRaw === 'islogged' ||
+      statusRaw === 'inchat' ||
+      statusRaw === 'chatsavailable'
+    ) {
       return {
-        state: 'error',
+        state: 'connected',
         sessionId,
-        details: 'OpenWA API anahtarı geçersiz veya yetkisiz. Lütfen doğru API Key girin.',
+        details: 'WhatsApp bağlı ve gönderime hazır.',
+        phoneConnected:
+          (statusData.phone as string) ||
+          (statusData.user as string) ||
+          (statusData.pushname as string) ||
+          'Bağlı',
       };
     }
 
-    if (response.status === 404) {
-      // Session does not exist yet. Try auto-creating session!
-      try {
-        const created = await this.createSession();
-        if (created) {
-          await this.startSession();
-          return {
-            state: 'starting',
-            sessionId,
-            details: `"${sessionId}" oturumu otomatik oluşturuldu, başlatılıyor...`,
-          };
-        }
-      } catch {
-        // Fallback
-      }
+    if (
+      statusRaw === 'qr_ready' ||
+      statusRaw === 'notlogged' ||
+      statusRaw === 'qr' ||
+      statusRaw === 'qrcode'
+    ) {
+      const qrCode = (statusData.qr as string) || (statusData.qrCode as string) || null;
       return {
-        state: 'disconnected',
+        state: 'qr_ready',
         sessionId,
-        details: `"${sessionId}" adlı oturum bulunamadı. Lütfen "Oturum Başlat" butonuna tıklayın.`,
+        details: 'QR kod hazır, lütfen telefonunuzdan taratın.',
+        qrCodeUrl: qrCode,
       };
     }
 
-    if (!response.ok) {
+    if (statusRaw === 'initializing' || statusRaw === 'starting' || statusRaw === 'created') {
       return {
-        state: 'error',
+        state: 'starting',
         sessionId,
-        details: `OpenWA yanıt vermedi (HTTP ${response.status}).`,
+        details: 'WhatsApp motoru başlatılıyor, lütfen bekleyin...',
       };
     }
 
-    try {
-      const data = await response.json();
-      const statusValue = (data.status || '').toLowerCase();
-
-      switch (statusValue) {
-        case 'ready':
-          return {
-            state: 'connected',
-            sessionId,
-            details: 'WhatsApp bağlı ve gönderime hazır.',
-            phoneConnected: data.phone || data.user || 'Bağlı',
-          };
-        case 'qr_ready':
-          return {
-            state: 'qr_ready',
-            sessionId,
-            details: 'QR kod hazır, lütfen telefonunuzdan taratın.',
-            qrCodeUrl: data.qr || null,
-          };
-        case 'initializing':
-        case 'created':
-          return {
-            state: 'starting',
-            sessionId,
-            details: 'WhatsApp motoru başlatılıyor...',
-          };
-        case 'authenticating':
-          return {
-            state: 'authenticating',
-            sessionId,
-            details: 'QR tarandı, oturum doğrulanıyor...',
-          };
-        default:
-          return {
-            state: 'disconnected',
-            sessionId,
-            details: `Oturum durumu: ${statusValue || 'Bilinmiyor'}`,
-          };
-      }
-    } catch {
+    if (statusRaw === 'authenticating') {
       return {
-        state: 'error',
+        state: 'authenticating',
         sessionId,
-        details: 'OpenWA yanıtı çözümlenemedi.',
+        details: 'QR kod tarandı, oturum doğrulanıyor...',
       };
     }
+
+    return {
+      state: 'disconnected',
+      sessionId,
+      details: `Oturum Durumu: ${statusRaw || 'Bağlantı Yok'}. Oturum Başlat butonuna basabilirsiniz.`,
+    };
   }
 
   /**
@@ -213,8 +211,9 @@ export class OpenWAProvider implements WhatsAppProvider {
   async getQrCode(): Promise<string | null> {
     const sessionId = this.config.sessionId || 'default';
     const candidatePaths = [
-      `/sessions/${sessionId}/qr`,
       `/api/sessions/${sessionId}/qr`,
+      `/api/${sessionId}/qrcode-session`,
+      `/api/sessions/${sessionId}`,
     ];
 
     for (const path of candidatePaths) {
@@ -222,8 +221,9 @@ export class OpenWAProvider implements WhatsAppProvider {
         const response = await this.request(path, { method: 'GET' });
         if (response.ok) {
           const data = await response.json().catch(() => null);
-          if (data && (data.qr || data.qrCode)) {
-            return data.qr || data.qrCode;
+          if (data) {
+            const qr = data.qr || data.qrCode || data.qrcode || (typeof data.url === 'string' && data.url.startsWith('data:image') ? data.url : null);
+            if (qr) return qr;
           }
         }
       } catch {
@@ -238,13 +238,19 @@ export class OpenWAProvider implements WhatsAppProvider {
    */
   async createSession(): Promise<boolean> {
     const sessionId = this.config.sessionId || 'default';
-    const candidatePaths = ['/sessions', '/api/sessions'];
 
-    for (const path of candidatePaths) {
+    // Official OpenWA payload requires: { name: sessionId }
+    // WPPConnect uses: /api/:session/start-session
+    const candidateCalls = [
+      { path: '/api/sessions', method: 'POST', body: { name: sessionId, sessionId } },
+      { path: `/api/${sessionId}/start-session`, method: 'POST', body: {} },
+    ];
+
+    for (const call of candidateCalls) {
       try {
-        const response = await this.request(path, {
-          method: 'POST',
-          body: JSON.stringify({ sessionId }),
+        const response = await this.request(call.path, {
+          method: call.method,
+          body: JSON.stringify(call.body),
         });
         if (response.ok || response.status === 409) {
           return true;
@@ -262,8 +268,8 @@ export class OpenWAProvider implements WhatsAppProvider {
   async startSession(): Promise<boolean> {
     const sessionId = this.config.sessionId || 'default';
     const candidatePaths = [
-      `/sessions/${sessionId}/start`,
       `/api/sessions/${sessionId}/start`,
+      `/api/${sessionId}/start-session`,
     ];
 
     for (const path of candidatePaths) {
@@ -285,16 +291,25 @@ export class OpenWAProvider implements WhatsAppProvider {
   async sendMessage(phone: string, message: string): Promise<SendResult> {
     const chatId = this.formatChatId(phone);
     const sessionId = this.config.sessionId || 'default';
-    const candidatePaths = [
-      `/sessions/${sessionId}/messages/send-text`,
-      `/api/sessions/${sessionId}/messages/send-text`,
+
+    const candidateCalls = [
+      // OpenWA
+      {
+        path: `/api/sessions/${sessionId}/messages/send-text`,
+        body: { chatId, text: message },
+      },
+      // WPPConnect
+      {
+        path: `/api/${sessionId}/send-message`,
+        body: { phone: normalizePhoneNumber(phone), message },
+      },
     ];
 
-    for (const path of candidatePaths) {
+    for (const call of candidateCalls) {
       try {
-        const response = await this.request(path, {
+        const response = await this.request(call.path, {
           method: 'POST',
-          body: JSON.stringify({ chatId, text: message }),
+          body: JSON.stringify(call.body),
         });
 
         if (response.ok) {
@@ -302,13 +317,6 @@ export class OpenWAProvider implements WhatsAppProvider {
           return {
             success: true,
             messageId: data.messageId || data.id || 'sent',
-          };
-        }
-
-        if (response.status === 409) {
-          return {
-            success: false,
-            error: 'WhatsApp oturumu hazır değil. Lütfen bağlantı durumunu kontrol edin.',
           };
         }
       } catch {
@@ -333,26 +341,40 @@ export class OpenWAProvider implements WhatsAppProvider {
   ): Promise<SendResult> {
     const chatId = this.formatChatId(phone);
     const sessionId = this.config.sessionId || 'default';
-    const candidatePaths = [
-      `/sessions/${sessionId}/messages/send-document`,
-      `/api/sessions/${sessionId}/messages/send-document`,
+
+    const cleanBase64 = base64Data.startsWith('data:')
+      ? base64Data.split(',')[1]
+      : base64Data;
+
+    const candidateCalls = [
+      // OpenWA
+      {
+        path: `/api/sessions/${sessionId}/messages/send-document`,
+        body: {
+          chatId,
+          base64: cleanBase64,
+          mimetype: 'application/pdf',
+          filename: fileName,
+          caption: caption || '',
+        },
+      },
+      // WPPConnect
+      {
+        path: `/api/${sessionId}/send-file-base64`,
+        body: {
+          phone: normalizePhoneNumber(phone),
+          base64: `data:application/pdf;base64,${cleanBase64}`,
+          filename: fileName,
+          message: caption || '',
+        },
+      },
     ];
 
-    const payload: Record<string, unknown> = {
-      chatId,
-      base64: base64Data,
-      mimetype: 'application/pdf',
-      filename: fileName,
-    };
-    if (caption) {
-      payload.caption = caption;
-    }
-
-    for (const path of candidatePaths) {
+    for (const call of candidateCalls) {
       try {
-        const response = await this.request(path, {
+        const response = await this.request(call.path, {
           method: 'POST',
-          body: JSON.stringify(payload),
+          body: JSON.stringify(call.body),
         });
 
         if (response.ok) {
@@ -360,13 +382,6 @@ export class OpenWAProvider implements WhatsAppProvider {
           return {
             success: true,
             messageId: data.messageId || data.id || 'sent',
-          };
-        }
-
-        if (response.status === 409) {
-          return {
-            success: false,
-            error: 'WhatsApp oturumu hazır değil.',
           };
         }
       } catch {
