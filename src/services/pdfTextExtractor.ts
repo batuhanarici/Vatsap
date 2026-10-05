@@ -5,13 +5,11 @@ import { normalizeForMatching } from './normalizer';
 
 // Initialize PDF.js worker safely for Vite / Browser
 if (typeof window !== 'undefined' && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
-  // Use unpkg/cdnjs reliable CDN fallback for the PDF.js web worker
   pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 }
 
 /**
- * Extracts all plain text content from a given File or ArrayBuffer using PDF.js
- * with a fast binary stream fallback.
+ * Extracts plain text content from a PDF using PDF.js and binary stream scanning fallback.
  */
 export async function extractTextFromPdf(input: File | ArrayBuffer): Promise<string> {
   let arrayBuffer: ArrayBuffer;
@@ -22,8 +20,9 @@ export async function extractTextFromPdf(input: File | ArrayBuffer): Promise<str
     arrayBuffer = input;
   }
 
+  let errorDetails: string | null = null;
+
   try {
-    // 1. Primary method: PDF.js full DOM parsing
     const loadingTask = pdfjsLib.getDocument({
       data: new Uint8Array(arrayBuffer),
       useWorkerFetch: false,
@@ -33,7 +32,7 @@ export async function extractTextFromPdf(input: File | ArrayBuffer): Promise<str
     const pdfDocument = await loadingTask.promise;
     const pageTexts: string[] = [];
 
-    // Scan up to first 5 pages (report cards are usually 1-2 pages)
+    // Scan first 5 pages
     const maxPages = Math.min(pdfDocument.numPages, 5);
     for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
       const page = await pdfDocument.getPage(pageNum);
@@ -49,35 +48,41 @@ export async function extractTextFromPdf(input: File | ArrayBuffer): Promise<str
       return fullText;
     }
   } catch (err) {
-    console.warn('PDF.js text parsing encountered an issue, trying binary stream scan fallback:', err);
+    errorDetails = err instanceof Error ? err.message : String(err);
   }
 
-  // 2. Fallback method: Direct regex scan for uncompressed text streams in raw PDF bytes
+  // Fallback: search raw PDF binary string for uncompressed text streams
   try {
     const bytes = new Uint8Array(arrayBuffer);
     const decoder = new TextDecoder('utf-8', { fatal: false });
     const rawString = decoder.decode(bytes);
 
-    // Look for text between parentheses in PDF text operators like (Student Name) Tj
     const matches = rawString.match(/\(([^()]{2,80})\)\s*T[jJ]/g);
     if (matches && matches.length > 0) {
       return matches
         .map((m) => m.replace(/^\(/, '').replace(/\)\s*T[jJ]$/, ''))
         .join(' ');
     }
-  } catch (fallbackErr) {
-    console.warn('Binary stream scan error:', fallbackErr);
+  } catch {
+    // binary parse fallback
+  }
+
+  if (errorDetails) {
+    throw new Error(`PDF metni okunamadı: ${errorDetails}`);
   }
 
   return '';
 }
 
-export interface OcrScanProgress {
+export interface PdfScanProgress {
   current: number;
   total: number;
   currentFileName: string;
   detectedStudentName?: string;
+  errors?: string[];
 }
+
+export type OcrScanProgress = PdfScanProgress; // Backwards compatibility
 
 /**
  * Searches the extracted PDF text to find matching student names.
@@ -112,36 +117,34 @@ export function findStudentInPdfText(
 }
 
 /**
- * Performs deep OCR / Content Text analysis across all PDF files for unmatched students.
+ * Performs deep content text analysis across all PDF files for unmatched students.
  */
 export async function performDeepPdfContentMatching(
   currentMatches: MatchedItem[],
   allPdfs: LocalPdfFile[],
-  onProgress?: (progress: OcrScanProgress) => void
+  onProgress?: (progress: PdfScanProgress) => void
 ): Promise<{
   updatedMatches: MatchedItem[];
   matchedCount: number;
+  errors: string[];
 }> {
-  // Find which students are still missing a PDF
   const missingStudentItems = currentMatches.filter((item) => item.status === 'missing_pdf');
   if (missingStudentItems.length === 0) {
-    return { updatedMatches: currentMatches, matchedCount: 0 };
+    return { updatedMatches: currentMatches, matchedCount: 0, errors: [] };
   }
 
-  // Find PDFs that are NOT yet assigned to any student
   const assignedPdfNames = new Set(
-    currentMatches
-      .filter((i) => i.pdfFile !== null)
-      .map((i) => i.pdfFile!.name)
+    currentMatches.filter((i) => i.pdfFile !== null).map((i) => i.pdfFile!.name)
   );
 
   const unassignedPdfs = allPdfs.filter((pdf) => !assignedPdfNames.has(pdf.name));
   if (unassignedPdfs.length === 0) {
-    return { updatedMatches: currentMatches, matchedCount: 0 };
+    return { updatedMatches: currentMatches, matchedCount: 0, errors: [] };
   }
 
   const remainingStudents = missingStudentItems.map((item) => item.student);
   const newlyMatched: Record<string, { pdf: LocalPdfFile; student: Student }> = {};
+  const scanErrors: string[] = [];
 
   let current = 0;
   const total = unassignedPdfs.length;
@@ -154,28 +157,27 @@ export async function performDeepPdfContentMatching(
         current,
         total,
         currentFileName: pdf.name,
+        errors: scanErrors,
       });
     }
 
     let textContent = pdf.extractedText || '';
 
-    // If text is not yet extracted and we have the File object
     if (!textContent && pdf.file) {
       try {
         textContent = await extractTextFromPdf(pdf.file);
         pdf.extractedText = textContent;
-      } catch (err) {
-        console.warn(`Failed to extract text from ${pdf.name}:`, err);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        scanErrors.push(`${pdf.name}: ${msg}`);
       }
     }
 
-    // Check if any remaining missing student's name is in this PDF's content
     if (textContent) {
       const foundStudent = findStudentInPdfText(textContent, remainingStudents);
       if (foundStudent) {
         newlyMatched[foundStudent.id] = { pdf, student: foundStudent };
 
-        // Remove from remaining students pool to avoid duplicate matching
         const sIndex = remainingStudents.findIndex((s) => s.id === foundStudent.id);
         if (sIndex !== -1) {
           remainingStudents.splice(sIndex, 1);
@@ -187,16 +189,15 @@ export async function performDeepPdfContentMatching(
             total,
             currentFileName: pdf.name,
             detectedStudentName: foundStudent.studentName,
+            errors: scanErrors,
           });
         }
 
-        // Brief delay for smooth UI progress animation
-        await new Promise((r) => setTimeout(r, 60));
+        await new Promise((r) => setTimeout(r, 40));
       }
     }
   }
 
-  // Update the matches table
   const updatedMatches = currentMatches.map((item) => {
     if (newlyMatched[item.student.id]) {
       const matchData = newlyMatched[item.student.id];
@@ -208,8 +209,13 @@ export async function performDeepPdfContentMatching(
       return {
         ...item,
         pdfFile: studentNamedPdf,
-        status: item.student.phone && item.student.phone.length >= 10 ? ('ready' as const) : ('invalid_phone' as const),
-        matchMethod: 'content_ocr' as const,
+        status:
+          item.student.phone && item.student.phone.length >= 10
+            ? ('ready' as const)
+            : ('invalid_phone' as const),
+        matchMethod: 'text_extraction' as const,
+        confidenceScore: 80,
+        matchReason: 'PDF içi metin taraması ile tespit edildi',
       };
     }
     return item;
@@ -218,5 +224,6 @@ export async function performDeepPdfContentMatching(
   return {
     updatedMatches,
     matchedCount: Object.keys(newlyMatched).length,
+    errors: scanErrors,
   };
 }

@@ -102,10 +102,18 @@ export async function executeSenderQueue(options: QueueOptions): Promise<{
     );
 
     // If direct document send fails, fallback to sending message text
+    let isFallbackTextOnly = false;
     if (!sendResult.success) {
       const fallbackResult = await provider.sendMessage(student.phone, messageText);
       if (fallbackResult.success) {
-        sendResult = { success: true };
+        isFallbackTextOnly = true;
+        sendResult = {
+          success: true,
+          outcome: 'partial_success',
+          pdfSent: false,
+          messageSent: true,
+          error: sendResult.error,
+        };
       }
     }
 
@@ -124,6 +132,9 @@ export async function executeSenderQueue(options: QueueOptions): Promise<{
         pdfFileName: targetPdfFileName,
         date: new Date().toISOString(),
         status: 'failed',
+        outcome: 'failed',
+        pdfSent: false,
+        messageSent: false,
         errorMessage: currentItem.errorMessage,
         examName: context?.examName,
       });
@@ -133,7 +144,9 @@ export async function executeSenderQueue(options: QueueOptions): Promise<{
 
     // Success for this student
     currentItem.sendingStatus = 'success';
-    currentItem.errorMessage = undefined;
+    currentItem.errorMessage = isFallbackTextOnly
+      ? 'PDF eklenemedi, veliye sadece mesaj metni iletildi.'
+      : undefined;
     onItemUpdated(currentItem);
     successCount++;
 
@@ -145,7 +158,13 @@ export async function executeSenderQueue(options: QueueOptions): Promise<{
       phone: student.phone,
       pdfFileName: targetPdfFileName,
       date: new Date().toISOString(),
-      status: 'success',
+      status: isFallbackTextOnly ? 'partial_success' : 'success',
+      outcome: sendResult.outcome || (isFallbackTextOnly ? 'partial_success' : 'success'),
+      pdfSent: sendResult.pdfSent,
+      messageSent: sendResult.messageSent,
+      errorMessage: isFallbackTextOnly
+        ? 'PDF eklenemedi, veliye sadece mesaj iletildi.'
+        : undefined,
       examName: context?.examName,
     });
 

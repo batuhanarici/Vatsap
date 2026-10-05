@@ -23,9 +23,7 @@ export const FolderSelector: React.FC<FolderSelectorProps> = ({
   // Handle directory selection
   const handleDirectoryClick = async () => {
     // If running inside Electron, use native macOS Finder picker
-    // @ts-expect-error electronAPI injected by preload
     if (window.electronAPI?.openDirectoryDialog) {
-      // @ts-expect-error electronAPI injected by preload
       const res = await window.electronAPI.openDirectoryDialog();
       if (res && res.folderPath) {
         onFolderSelected(res.folderPath, res.pdfFiles || []);

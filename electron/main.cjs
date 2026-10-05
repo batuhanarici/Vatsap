@@ -84,6 +84,73 @@ ipcMain.handle('file:readBase64', async (_, filePath) => {
   }
 });
 
+// IPC Handler for OpenWA HTTP API requests (Bypasses Chromium CORS and sandbox network hurdles)
+ipcMain.handle('openwa:request', async (_, options) => {
+  const { url, method = 'GET', headers = {}, body, timeoutMs = 15000 } = options || {};
+  if (!url) {
+    return { ok: false, status: 400, error: 'URL parametresi belirtilmedi.' };
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
+  try {
+    const fetchHeaders = {
+      Accept: 'application/json',
+      ...headers,
+    };
+
+    const fetchOptions = {
+      method,
+      headers: fetchHeaders,
+      signal: controller.signal,
+    };
+
+    if (body && ['POST', 'PUT', 'PATCH'].includes(method.toUpperCase())) {
+      fetchOptions.body = typeof body === 'string' ? body : JSON.stringify(body);
+      if (!fetchHeaders['Content-Type']) {
+        fetchHeaders['Content-Type'] = 'application/json';
+      }
+    }
+
+    const response = await fetch(url, fetchOptions);
+    clearTimeout(timer);
+
+    const contentType = response.headers.get('content-type') || '';
+    let data = null;
+    if (contentType.includes('application/json')) {
+      data = await response.json().catch(() => null);
+    } else {
+      const text = await response.text().catch(() => '');
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = text;
+      }
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      data,
+    };
+  } catch (err) {
+    clearTimeout(timer);
+    const isAbort = err.name === 'AbortError' || (err.message && err.message.includes('abort'));
+    return {
+      ok: false,
+      status: 0,
+      statusText: isAbort ? 'Timeout' : 'NetworkError',
+      error: isAbort
+        ? `OpenWA sunucusu ${timeoutMs}ms içinde yanıt vermedi (Zaman aşımı).`
+        : `OpenWA servisine (${url}) ulaşılamadı: ${err.message}`,
+    };
+  }
+});
+
 app.whenReady().then(() => {
   createWindow();
 

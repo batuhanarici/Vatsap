@@ -3,8 +3,8 @@ import { WhatsAppStatus, SendResult } from '../../types/whatsapp';
 export interface WhatsAppProvider {
   getStatus(): Promise<WhatsAppStatus>;
   getQrCode(): Promise<string | null>;
-  createSession?(): Promise<boolean>;
-  startSession?(): Promise<boolean>;
+  createSession?(sessionName?: string): Promise<{ success: boolean; sessionUuid?: string; error?: string }>;
+  startSession?(sessionIdentifier?: string): Promise<{ success: boolean; error?: string }>;
   sendMessage(phone: string, message: string): Promise<SendResult>;
   sendDocument(
     phone: string,

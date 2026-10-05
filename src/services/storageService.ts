@@ -62,10 +62,11 @@ export const DEFAULT_CONFIG: OpenWAConfig & {
   examName: string;
   schoolName: string;
 } = {
-  providerType: 'whatsapp_web',
+  providerType: 'openwa',
   baseUrl: 'http://127.0.0.1:2785/api',
   apiKey: '',
   sessionId: 'default',
+  sessionUuid: '',
   autoStart: true,
   metaToken: '',
   metaPhoneNumberId: '',

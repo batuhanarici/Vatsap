@@ -99,11 +99,12 @@ export default function App() {
     }
   }, [isMockMode, config.providerType, mockProvider, metaCloudProvider, openWaProvider, webProvider]);
 
-  // WhatsApp Connection State
+  // WhatsApp Connection State (starts as 'checking' or 'disconnected', never falsely 'connected')
   const [whatsAppStatus, setWhatsAppStatus] = useState<WhatsAppStatus>({
-    state: 'connected',
-    sessionId: config.sessionId,
-    details: 'WhatsApp Web Modu Aktif (API Anahtarı Gerekmez)'
+    state: 'checking',
+    sessionId: config.sessionId || 'default',
+    sessionUuid: config.sessionUuid,
+    details: 'WhatsApp bağlantı durumu kontrol ediliyor...',
   });
   const [isCheckingStatus, setIsCheckingStatus] = useState<boolean>(false);
   const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null);
@@ -770,33 +771,80 @@ export default function App() {
         onCheckStatus={() => checkStatus(true)}
         isChecking={isCheckingStatus}
         qrCodeUrl={qrCodeUrl}
-        onStartSession={async () => {
+        onStartSession={async (sessionParams) => {
           addToast({
             id: 'session_start',
             type: 'loading',
             title: 'Oturum Başlatılıyor',
             message: 'OpenWA üzerinde oturum başlatılıyor...',
           });
-          const created = await openWaProvider.createSession();
-          const started = await openWaProvider.startSession();
-          const st = await checkStatus(false);
-          if (created || started || st.state === 'qr_ready' || st.state === 'starting' || st.state === 'connected') {
-            addToast({
-              id: 'session_start',
-              type: 'success',
-              title: 'İşleminiz Başarılı',
-              message: 'Oturum başlatıldı! QR kod hazırlandığında görüntülenecektir.',
+
+          // 1. Immediately apply latest credentials from the Settings form
+          if (sessionParams) {
+            openWaProvider.updateConfig({
+              baseUrl: sessionParams.baseUrl,
+              apiKey: sessionParams.apiKey,
+              sessionId: sessionParams.sessionId,
             });
-            return true;
-          } else {
+            const updated = {
+              baseUrl: sessionParams.baseUrl,
+              apiKey: sessionParams.apiKey,
+              sessionId: sessionParams.sessionId,
+            };
+            setConfig((prev) => ({ ...prev, ...updated }));
+            storageService.saveConfig(updated);
+          }
+
+          // 2. Create session on OpenWA
+          const targetSessionId =
+            sessionParams?.sessionId || openWaProvider.getConfig().sessionId || 'default';
+          const createRes = await openWaProvider.createSession(targetSessionId);
+          if (!createRes.success) {
             addToast({
               id: 'session_start',
               type: 'error',
               title: 'İşlem Başarısız',
-              message: 'Oturum başlatılamadı. Sunucu URL ve portunu kontrol edin.',
+              message: createRes.error || 'Oturum oluşturulamadı.',
             });
-            return false;
+            return { success: false, error: createRes.error };
           }
+
+          // Store discovered UUID
+          if (createRes.sessionUuid) {
+            storageService.saveConfig({ sessionUuid: createRes.sessionUuid });
+            setConfig((prev) => ({ ...prev, sessionUuid: createRes.sessionUuid }));
+          }
+
+          // 3. Start session engine
+          const startRes = await openWaProvider.startSession(createRes.sessionUuid || targetSessionId);
+          if (!startRes.success) {
+            addToast({
+              id: 'session_start',
+              type: 'error',
+              title: 'İşlem Başarısız',
+              message: startRes.error || 'Oturum başlatılamadı.',
+            });
+            return { success: false, error: startRes.error };
+          }
+
+          // 4. Refresh status
+          const st = await checkStatus(false);
+          addToast({
+            id: 'session_start',
+            type: 'success',
+            title: 'İşleminiz Başarılı',
+            message:
+              st.state === 'qr_ready'
+                ? 'Oturum başlatıldı ve QR kod hazır! Lütfen telefonunuzdaki WhatsApp ile taratın.'
+                : st.state === 'connected'
+                ? 'Oturum başarıyla bağlandı ve hazır!'
+                : 'Oturum başlatıldı! WhatsApp motoru hazırlanıyor...',
+          });
+
+          return {
+            success: true,
+            sessionUuid: createRes.sessionUuid,
+          };
         }}
       />
 

@@ -11,17 +11,20 @@ export interface LocalPdfFile {
   extractedText?: string;
 }
 
-export type MatchingStatus = 'ready' | 'missing_pdf' | 'invalid_phone';
+export type MatchingStatus = 'ready' | 'missing_pdf' | 'invalid_phone' | 'pending_confirmation';
 
 export type SendingStatus = 
   | 'idle' 
   | 'waiting' 
   | 'sending_message' 
   | 'sending_pdf' 
+  | 'retrying'
   | 'success' 
-  | 'failed';
+  | 'partial_success'
+  | 'failed'
+  | 'cancelled';
 
-export type MatchingMethod = 'filename' | 'content_ocr' | 'manual';
+export type MatchingMethod = 'filename' | 'text_extraction' | 'content_ocr' | 'manual';
 
 export interface MatchedItem {
   id: string;
@@ -31,4 +34,10 @@ export interface MatchedItem {
   sendingStatus: SendingStatus;
   errorMessage?: string;
   matchMethod?: MatchingMethod;
+  confidenceScore?: number; // 0 - 100
+  matchReason?: string;
+  hasConflict?: boolean;
+  isManuallyAssigned?: boolean;
+  needsConfirmation?: boolean;
+  attempts?: number;
 }

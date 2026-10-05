@@ -108,3 +108,47 @@ export function maskPhoneNumber(phone: string): string {
   }
   return '***';
 }
+
+/**
+ * Checks a list of students for duplicate phone numbers or student names
+ */
+export function detectStudentDuplicates(students: { id: string; studentName: string; phone: string }[]): {
+  duplicatePhones: Map<string, string[]>; // normalizedPhone -> studentNames[]
+  duplicateNames: Map<string, string[]>;  // simplifiedName -> studentNames[]
+} {
+  const phoneMap = new Map<string, string[]>();
+  const nameMap = new Map<string, string[]>();
+
+  for (const s of students) {
+    const cleanPhone = normalizePhoneNumber(s.phone);
+    if (cleanPhone) {
+      const existing = phoneMap.get(cleanPhone) || [];
+      existing.push(s.studentName);
+      phoneMap.set(cleanPhone, existing);
+    }
+
+    const cleanName = simplifyForComparison(s.studentName);
+    if (cleanName) {
+      const existing = nameMap.get(cleanName) || [];
+      existing.push(s.studentName);
+      nameMap.set(cleanName, existing);
+    }
+  }
+
+  const duplicatePhones = new Map<string, string[]>();
+  phoneMap.forEach((names, phone) => {
+    if (names.length > 1) {
+      duplicatePhones.set(phone, names);
+    }
+  });
+
+  const duplicateNames = new Map<string, string[]>();
+  nameMap.forEach((names, simplified) => {
+    if (names.length > 1) {
+      duplicateNames.set(simplified, names);
+    }
+  });
+
+  return { duplicatePhones, duplicateNames };
+}
+

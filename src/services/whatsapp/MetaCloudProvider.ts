@@ -105,6 +105,9 @@ export class MetaCloudProvider implements WhatsAppProvider {
         const errorData = await response.json().catch(() => null);
         return {
           success: false,
+          outcome: 'failed',
+          pdfSent: false,
+          messageSent: false,
           error: errorData?.error?.message || `Gönderim başarısız (${response.status})`,
         };
       }
@@ -112,11 +115,17 @@ export class MetaCloudProvider implements WhatsAppProvider {
       const resJson = await response.json();
       return {
         success: true,
+        outcome: 'partial_success',
+        pdfSent: false,
+        messageSent: true,
         messageId: resJson?.messages?.[0]?.id,
       };
     } catch (err) {
       return {
         success: false,
+        outcome: 'failed',
+        pdfSent: false,
+        messageSent: false,
         error: err instanceof Error ? err.message : 'Bağlantı hatası',
       };
     }
@@ -124,7 +133,7 @@ export class MetaCloudProvider implements WhatsAppProvider {
 
   async sendDocument(
     phone: string,
-    base64Data: string,
+    _base64Data: string,
     fileName: string,
     caption?: string
   ): Promise<SendResult> {
@@ -133,6 +142,11 @@ export class MetaCloudProvider implements WhatsAppProvider {
     if (caption) {
       return this.sendMessage(phone, `[Belge: ${fileName}]\n\n${caption}`);
     }
-    return { success: true };
+    return {
+      success: true,
+      outcome: 'partial_success',
+      pdfSent: false,
+      messageSent: true,
+    };
   }
 }

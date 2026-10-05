@@ -19,6 +19,12 @@ import {
   Terminal,
 } from 'lucide-react';
 
+export interface StartSessionParams {
+  baseUrl: string;
+  apiKey: string;
+  sessionId: string;
+}
+
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -42,7 +48,9 @@ interface SettingsModalProps {
   onCheckStatus: () => Promise<WhatsAppStatus | void> | void;
   isChecking: boolean;
   qrCodeUrl: string | null;
-  onStartSession: () => Promise<boolean | void> | void;
+  onStartSession: (
+    params: StartSessionParams
+  ) => Promise<{ success: boolean; sessionUuid?: string; error?: string } | boolean>;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -57,11 +65,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onStartSession,
 }) => {
   const [providerType, setProviderType] = useState<WhatsAppProviderType>(
-    config.providerType || 'whatsapp_web'
+    config.providerType || 'openwa'
   );
 
   // OpenWA fields
-  const [baseUrl, setBaseUrl] = useState(config.baseUrl || 'http://localhost:2785/api');
+  const [baseUrl, setBaseUrl] = useState(config.baseUrl || 'http://127.0.0.1:2785/api');
   const [apiKey, setApiKey] = useState(config.apiKey || '');
   const [sessionId, setSessionId] = useState(config.sessionId || 'default');
 
@@ -88,8 +96,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   // Sync state on open
   useEffect(() => {
     if (isOpen) {
-      setProviderType(config.providerType || 'whatsapp_web');
-      setBaseUrl(config.baseUrl || 'http://localhost:2785/api');
+      setProviderType(config.providerType || 'openwa');
+      setBaseUrl(config.baseUrl || 'http://127.0.0.1:2785/api');
       setApiKey(config.apiKey || '');
       setSessionId(config.sessionId || 'default');
       setMetaToken(config.metaToken || '');
@@ -212,21 +220,40 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setFeedback({
       type: 'loading',
       title: 'Oturum Başlatılıyor',
-      message: 'OpenWA üzerinde oturum açılıyor...',
+      message: 'OpenWA üzerinde oturum başlatılıyor...',
     });
 
     try {
-      await onStartSession();
-      setFeedback({
-        type: 'success',
-        title: 'İşleminiz Başarılı',
-        message: 'Oturum başlatma komutu iletildi. QR kod yükleniyor...',
+      const result = await onStartSession({
+        baseUrl: baseUrl.trim(),
+        apiKey: apiKey.trim(),
+        sessionId: sessionId.trim() || 'default',
       });
-    } catch {
+
+      const isSuccess = typeof result === 'boolean' ? result : Boolean(result?.success);
+      const errorMsg = typeof result === 'object' && result?.error ? result.error : undefined;
+
+      if (isSuccess) {
+        setFeedback({
+          type: 'success',
+          title: 'İşleminiz Başarılı',
+          message: 'Oturum oluşturuldu ve başlatıldı! QR kod hazırlandığında birazdan görüntülenecektir.',
+        });
+      } else {
+        setFeedback({
+          type: 'error',
+          title: 'İşlem Başarısız',
+          message:
+            errorMsg ||
+            'Oturum başlatılamadı. Lütfen Docker servisinin açık olduğunu, 2785 portunu ve API anahtarını kontrol edin.',
+        });
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Bilinmeyen hata oluştu.';
       setFeedback({
         type: 'error',
         title: 'İşlem Başarısız',
-        message: 'Oturum başlatılamadı. Sunucu URL ve portunu kontrol edin.',
+        message: `Oturum başlatılamadı: ${errMsg}`,
       });
     }
   };
@@ -542,18 +569,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <div className="flex items-center gap-1">
                       <button
                         type="button"
-                        onClick={() => setBaseUrl('http://localhost:2785/api')}
+                        onClick={() => setBaseUrl('http://127.0.0.1:2785/api')}
                         className="text-[10px] text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200 underline cursor-pointer"
                       >
-                        :2785/api
+                        127.0.0.1:2785/api
                       </button>
                       <span className="text-[10px] text-neutral-400">•</span>
                       <button
                         type="button"
-                        onClick={() => setBaseUrl('http://localhost:2785')}
+                        onClick={() => setBaseUrl('http://localhost:2785/api')}
                         className="text-[10px] text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200 underline cursor-pointer"
                       >
-                        :2785
+                        localhost:2785/api
                       </button>
                     </div>
                   </div>
