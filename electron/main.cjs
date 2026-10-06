@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -82,6 +82,39 @@ ipcMain.handle('file:readBase64', async (_, filePath) => {
     console.error('Dosya okunamadı:', err);
     throw err;
   }
+});
+
+// Secure Storage via Electron safeStorage (macOS Keychain / OS-level encryption)
+ipcMain.handle('secure:isAvailable', () => {
+  return Boolean(safeStorage && safeStorage.isEncryptionAvailable && safeStorage.isEncryptionAvailable());
+});
+
+ipcMain.handle('secure:encrypt', (_, plainText) => {
+  if (!plainText) return '';
+  if (safeStorage && safeStorage.isEncryptionAvailable && safeStorage.isEncryptionAvailable()) {
+    try {
+      const buffer = safeStorage.encryptString(plainText);
+      return buffer.toString('base64');
+    } catch (err) {
+      console.error('safeStorage şifreleme hatası:', err);
+      return plainText;
+    }
+  }
+  return plainText;
+});
+
+ipcMain.handle('secure:decrypt', (_, cipherTextBase64) => {
+  if (!cipherTextBase64) return '';
+  if (safeStorage && safeStorage.isEncryptionAvailable && safeStorage.isEncryptionAvailable()) {
+    try {
+      const buffer = Buffer.from(cipherTextBase64, 'base64');
+      return safeStorage.decryptString(buffer);
+    } catch (err) {
+      console.error('safeStorage çözme hatası:', err);
+      return cipherTextBase64;
+    }
+  }
+  return cipherTextBase64;
 });
 
 // IPC Handler for OpenWA HTTP API requests (Bypasses Chromium CORS and sandbox network hurdles)

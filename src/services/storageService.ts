@@ -59,6 +59,8 @@ export const DEFAULT_TEMPLATE = DEFAULT_TEMPLATES[0].content;
 export const DEFAULT_CONFIG: OpenWAConfig & {
   testPhone: string;
   delaySeconds: number;
+  maxRetries: number;
+  retryDelaySeconds: number;
   examName: string;
   schoolName: string;
 } = {
@@ -72,6 +74,8 @@ export const DEFAULT_CONFIG: OpenWAConfig & {
   metaPhoneNumberId: '',
   testPhone: '',
   delaySeconds: 3,
+  maxRetries: 2,
+  retryDelaySeconds: 2,
   examName: 'Genel Değerlendirme ve Deneme Sınavı',
   schoolName: 'Özel Başarı Okulları',
 };
@@ -124,15 +128,29 @@ export const storageService = {
     localStorage.setItem(STUDENTS_STORAGE_KEY, JSON.stringify([]));
   },
 
-  exportFullBackup(): string {
+  exportFullBackup(includeSecrets = false): string {
+    const rawConfig = this.getConfig();
+    const safeConfig = { ...rawConfig };
+
+    // Security: By default, omit sensitive tokens and keys from backup files
+    if (!includeSecrets) {
+      if (safeConfig.apiKey) {
+        safeConfig.apiKey = '*** Gizli (Dışa aktarmada gizlendi) ***';
+      }
+      if (safeConfig.metaToken) {
+        safeConfig.metaToken = '*** Gizli (Dışa aktarmada gizlendi) ***';
+      }
+    }
+
     const backup = {
       app: 'KarneGonderici',
       exportedAt: new Date().toISOString(),
+      containsSecrets: includeSecrets,
       students: this.getStudents(),
       templates: this.getTemplates(),
       activeTemplateId: this.getActiveTemplateId(),
       history: this.getHistory(),
-      config: this.getConfig(),
+      config: safeConfig,
     };
     return JSON.stringify(backup, null, 2);
   },
@@ -294,5 +312,43 @@ export const storageService = {
     } catch {
       // Ignore
     }
+  },
+
+  getActiveQueueState(): PersistedQueueState | null {
+    try {
+      const data = localStorage.getItem('karne_active_queue_state');
+      if (data) {
+        return JSON.parse(data) as PersistedQueueState;
+      }
+    } catch {
+      // Fallback
+    }
+    return null;
+  },
+
+  saveActiveQueueState(state: PersistedQueueState | null): void {
+    try {
+      if (state) {
+        localStorage.setItem('karne_active_queue_state', JSON.stringify(state));
+      } else {
+        localStorage.removeItem('karne_active_queue_state');
+      }
+    } catch {
+      // Ignore
+    }
   }
 };
+
+export interface PersistedQueueState {
+  id: string;
+  examName: string;
+  selectedGroup?: string;
+  totalCount: number;
+  currentIndex: number;
+  completedStudentIds: string[];
+  failedStudentIds: string[];
+  partialStudentIds: string[];
+  pendingStudentIds: string[];
+  updatedAt: string;
+  status: 'running' | 'paused' | 'completed' | 'interrupted';
+}

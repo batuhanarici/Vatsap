@@ -18,6 +18,7 @@ import { SendingProgressModal } from './components/SendingProgressModal';
 import { PdfPreviewModal } from './components/PdfPreviewModal';
 import { ScheduleBanner } from './components/ScheduleBanner';
 import { ToastNotification, ToastMessage } from './components/ToastNotification';
+import { Play, RotateCcw } from 'lucide-react';
 
 import { Student, StudentFormData } from './types/student';
 import { LocalPdfFile, MatchedItem } from './types/pdf';
@@ -26,7 +27,7 @@ import { HistoryItem } from './types/history';
 import { MessageTemplate } from './types/template';
 import { ScheduledDispatch } from './types/schedule';
 
-import { storageService, INITIAL_STUDENTS, SAMPLE_TEST_STUDENTS, DEFAULT_TEMPLATE } from './services/storageService';
+import { storageService, INITIAL_STUDENTS, SAMPLE_TEST_STUDENTS, DEFAULT_TEMPLATE, PersistedQueueState } from './services/storageService';
 import { matchStudentsWithPdfs } from './services/pdfMatcher';
 import { performDeepPdfContentMatching, OcrScanProgress } from './services/pdfTextExtractor';
 import { OpenWAProvider } from './services/whatsapp/OpenWAProvider';
@@ -136,8 +137,13 @@ export default function App() {
   const [isSending, setIsSending] = useState<boolean>(false);
   const [progressEvent, setProgressEvent] = useState<QueueProgressEvent | null>(null);
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
+  const [isPaused, setIsPaused] = useState<boolean>(false);
   const cancelSendingRef = useRef<boolean>(false);
+  const isPausedRef = useRef<boolean>(false);
   const [selectedGroup, setSelectedGroup] = useState<string>('all');
+  const [interruptedQueue, setInterruptedQueue] = useState<PersistedQueueState | null>(() =>
+    storageService.getActiveQueueState()
+  );
 
   // Individual item overrides (for runtime updates during queue or manual retries)
   const [itemOverrides, setItemOverrides] = useState<Record<string, Partial<MatchedItem>>>({});
@@ -263,7 +269,7 @@ export default function App() {
 
       const newOverrides: Record<string, Partial<MatchedItem>> = {};
       result.updatedMatches.forEach((updated) => {
-        if (updated.matchMethod === 'content_ocr') {
+        if (updated.matchMethod === 'text_extraction' || (updated.matchMethod as string) === 'content_ocr') {
           newOverrides[updated.id] = updated;
         }
       });
@@ -271,13 +277,33 @@ export default function App() {
       setItemOverrides((prev) => ({ ...prev, ...newOverrides }));
 
       if (result.matchedCount > 0) {
-        alert(`${result.matchedCount} öğrenci PDF içerisindeki isim okunarak başarıyla eşleştirildi!`);
+        addToast({
+          type: 'success',
+          title: 'Metin Taraması Başarılı',
+          message: `${result.matchedCount} öğrenci PDF dijital metin katmanı okunarak başarıyla eşleştirildi!`,
+        });
       } else {
-        alert('Taranan PDF dosyalarının içeriğinde eksik kalan öğrencilerin isimleri bulunamadı.');
+        addToast({
+          type: 'info',
+          title: 'Metin Eşleşmesi Bulunamadı',
+          message: 'Boştaki PDF dosyalarının metin katmanında eşleşmeyen öğrencilere ait isim tespit edilemedi.',
+        });
+      }
+
+      if (result.scannedImagePdfs && result.scannedImagePdfs.length > 0) {
+        addToast({
+          type: 'warning',
+          title: 'Taranmış Görsel Belge Uyarısı',
+          message: `${result.scannedImagePdfs.length} adet PDF (${result.scannedImagePdfs.slice(0, 3).join(', ')}${result.scannedImagePdfs.length > 3 ? '...' : ''}) taranmış görsel/resim olduğu için seçilebilir dijital metin katmanı içermiyor. Görsel OCR yerine bu dosyaları "Ata / Değiştir" butonuyla manuel eşleştirebilirsiniz.`,
+        });
       }
     } catch (err) {
-      console.error('OCR scanning error:', err);
-      alert('PDF içerik taraması sırasında hata oluştu: ' + (err instanceof Error ? err.message : String(err)));
+      console.error('PDF text scanning error:', err);
+      addToast({
+        type: 'error',
+        title: 'Tarama Hatası',
+        message: 'PDF içerik taraması sırasında hata oluştu: ' + (err instanceof Error ? err.message : String(err)),
+      });
     } finally {
       setIsOcrScanning(false);
       setOcrProgress(null);
@@ -348,6 +374,8 @@ export default function App() {
   const handleConfirmSend = async (customExamName?: string) => {
     setIsSending(true);
     setIsCompleted(false);
+    setIsPaused(false);
+    isPausedRef.current = false;
     cancelSendingRef.current = false;
     setIsProgressOpen(true);
 
@@ -355,7 +383,7 @@ export default function App() {
       ? matchedItems
       : matchedItems.filter((i) => (i.student.group || 'Genel') === selectedGroup);
 
-    const itemsToSend = targetItems.filter((i) => i.status === 'ready');
+    const itemsToSend = targetItems.filter((i) => i.status === 'ready' || i.status === 'pending_confirmation');
     const examName = customExamName || config.examName || 'Genel Değerlendirme Sınavı';
 
     await executeSenderQueue({
@@ -363,6 +391,8 @@ export default function App() {
       template,
       provider: activeProvider,
       delayMs: (config.delaySeconds || 3) * 1000,
+      maxRetries: config.maxRetries ?? 2,
+      retryDelayMs: (config.retryDelaySeconds ?? 2) * 1000,
       context: {
         examName,
         schoolName: config.schoolName,
@@ -377,11 +407,122 @@ export default function App() {
         }));
       },
       isCancelled: () => cancelSendingRef.current,
+      isPaused: () => isPausedRef.current,
     });
 
     setIsCompleted(true);
     setIsSending(false);
     setHistory(storageService.getHistory());
+  };
+
+  const handleTogglePause = () => {
+    const next = !isPausedRef.current;
+    isPausedRef.current = next;
+    setIsPaused(next);
+  };
+
+  const handleRetryFailedBatch = async () => {
+    const failedItems = matchedItems.filter(
+      (i) => i.sendingStatus === 'failed' || i.sendingStatus === 'partial_success'
+    );
+    if (failedItems.length === 0) return;
+
+    setIsCompleted(false);
+    setIsSending(true);
+    setIsPaused(false);
+    isPausedRef.current = false;
+    cancelSendingRef.current = false;
+
+    await executeSenderQueue({
+      items: failedItems,
+      template,
+      provider: activeProvider,
+      delayMs: (config.delaySeconds || 3) * 1000,
+      maxRetries: config.maxRetries ?? 2,
+      retryDelayMs: (config.retryDelaySeconds ?? 2) * 1000,
+      context: {
+        examName: config.examName || 'Genel Değerlendirme Sınavı',
+        schoolName: config.schoolName,
+      },
+      onProgress: (event) => {
+        setProgressEvent(event);
+      },
+      onItemUpdated: (updatedItem) => {
+        setItemOverrides((prev) => ({
+          ...prev,
+          [updatedItem.id]: updatedItem,
+        }));
+      },
+      isCancelled: () => cancelSendingRef.current,
+      isPaused: () => isPausedRef.current,
+    });
+
+    setIsCompleted(true);
+    setIsSending(false);
+    setHistory(storageService.getHistory());
+  };
+
+  const handleResumeInterruptedQueue = async () => {
+    if (!interruptedQueue) return;
+    if (whatsAppStatus.state !== 'connected') {
+      alert('WhatsApp bağlı değil. Lütfen Ayarlar menüsünden bağlantıyı kontrol edin.');
+      return;
+    }
+
+    const pendingSet = new Set(interruptedQueue.pendingStudentIds);
+    const targetItems = matchedItems.filter(
+      (i) => pendingSet.has(i.student.id) && (i.status === 'ready' || i.status === 'pending_confirmation')
+    );
+
+    if (targetItems.length === 0) {
+      alert('Kalan öğrenciler arasında gönderime hazır karne bulunamadı.');
+      setInterruptedQueue(null);
+      storageService.saveActiveQueueState(null);
+      return;
+    }
+
+    const exam = interruptedQueue.examName;
+    setInterruptedQueue(null);
+
+    setIsSending(true);
+    setIsCompleted(false);
+    setIsPaused(false);
+    isPausedRef.current = false;
+    cancelSendingRef.current = false;
+    setIsProgressOpen(true);
+
+    await executeSenderQueue({
+      items: targetItems,
+      template,
+      provider: activeProvider,
+      delayMs: (config.delaySeconds || 3) * 1000,
+      maxRetries: config.maxRetries ?? 2,
+      retryDelayMs: (config.retryDelaySeconds ?? 2) * 1000,
+      context: {
+        examName: exam,
+        schoolName: config.schoolName,
+      },
+      onProgress: (event) => {
+        setProgressEvent(event);
+      },
+      onItemUpdated: (updatedItem) => {
+        setItemOverrides((prev) => ({
+          ...prev,
+          [updatedItem.id]: updatedItem,
+        }));
+      },
+      isCancelled: () => cancelSendingRef.current,
+      isPaused: () => isPausedRef.current,
+    });
+
+    setIsCompleted(true);
+    setIsSending(false);
+    setHistory(storageService.getHistory());
+  };
+
+  const handleDiscardInterruptedQueue = () => {
+    setInterruptedQueue(null);
+    storageService.saveActiveQueueState(null);
   };
 
   // Audio chime notification for when scheduled dispatch starts
@@ -506,6 +647,8 @@ export default function App() {
       template,
       provider: activeProvider,
       delayMs: 0,
+      maxRetries: config.maxRetries ?? 2,
+      retryDelayMs: (config.retryDelaySeconds ?? 2) * 1000,
       onProgress: () => {},
       onItemUpdated: (updatedItem) => {
         setItemOverrides((prev) => ({
@@ -695,6 +838,47 @@ export default function App() {
           />
         )}
 
+        {/* Interrupted / Unfinished Queue Recovery Banner */}
+        {interruptedQueue && (
+          <div className="mb-4 p-4 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50/90 dark:bg-amber-950/40 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs shadow-xs">
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300 rounded-lg shrink-0">
+                <RotateCcw className="w-4 h-4" />
+              </div>
+              <div>
+                <h4 className="font-semibold text-amber-950 dark:text-amber-200 text-sm flex items-center gap-2">
+                  <span>Önceki Gönderim Tamamlanmadı</span>
+                  <span className="text-[11px] font-mono px-2 py-0.2 rounded-full bg-amber-200/80 dark:bg-amber-900 text-amber-900 dark:text-amber-200">
+                    {interruptedQueue.examName}
+                  </span>
+                </h4>
+                <p className="text-amber-800 dark:text-amber-300 mt-0.5">
+                  Uygulama sonlandığında toplam {interruptedQueue.totalCount} öğrenciden{' '}
+                  <strong>{interruptedQueue.completedStudentIds.length}</strong> tanesi başarıyla iletilmişti.
+                  Kalan <strong>{interruptedQueue.pendingStudentIds.length}</strong> öğrenci için gönderime kaldığı yerden devam edebilirsiniz.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={handleResumeInterruptedQueue}
+                className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg transition-colors cursor-pointer shadow-2xs flex items-center gap-1.5"
+              >
+                <Play className="w-3.5 h-3.5" />
+                <span>Kaldığı Yerden Devam Et ({interruptedQueue.pendingStudentIds.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleDiscardInterruptedQueue}
+                className="px-3 py-2 border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-300 rounded-lg transition-colors cursor-pointer"
+              >
+                İptal Et
+              </button>
+            </div>
+          </div>
+        )}
+
         {activeTab === 'send' && (
           <div>
             {/* Folder Picker */}
@@ -880,6 +1064,9 @@ export default function App() {
         onClose={() => setIsProgressOpen(false)}
         progressEvent={progressEvent}
         isCompleted={isCompleted}
+        isPaused={isPaused}
+        onTogglePause={handleTogglePause}
+        onRetryFailed={handleRetryFailedBatch}
         onCancel={() => {
           cancelSendingRef.current = true;
           setIsSending(false);

@@ -8,10 +8,19 @@ if (typeof window !== 'undefined' && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
   pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 }
 
+export interface PdfTextExtractionResult {
+  text: string;
+  hasTextLayer: boolean;
+  isScannedImageOnly: boolean;
+  pageCount: number;
+  unsupportedOcrReason?: string;
+}
+
 /**
- * Extracts plain text content from a PDF using PDF.js and binary stream scanning fallback.
+ * Extracts plain text content from a PDF with clear discrimination between
+ * selectable digital text layers vs. scanned/image-only PDFs.
  */
-export async function extractTextFromPdf(input: File | ArrayBuffer): Promise<string> {
+export async function extractTextFromPdf(input: File | ArrayBuffer): Promise<PdfTextExtractionResult> {
   let arrayBuffer: ArrayBuffer;
 
   if (input instanceof File) {
@@ -21,6 +30,7 @@ export async function extractTextFromPdf(input: File | ArrayBuffer): Promise<str
   }
 
   let errorDetails: string | null = null;
+  let pageCount = 0;
 
   try {
     const loadingTask = pdfjsLib.getDocument({
@@ -30,13 +40,17 @@ export async function extractTextFromPdf(input: File | ArrayBuffer): Promise<str
     });
 
     const pdfDocument = await loadingTask.promise;
+    pageCount = pdfDocument.numPages;
     const pageTexts: string[] = [];
+    let totalItemsFound = 0;
 
     // Scan first 5 pages
     const maxPages = Math.min(pdfDocument.numPages, 5);
     for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
       const page = await pdfDocument.getPage(pageNum);
       const textContent = await page.getTextContent();
+      totalItemsFound += textContent.items.length;
+
       const textItems = textContent.items
         .map((item) => ('str' in item ? (item as { str: string }).str : ''))
         .join(' ');
@@ -44,8 +58,26 @@ export async function extractTextFromPdf(input: File | ArrayBuffer): Promise<str
     }
 
     const fullText = pageTexts.join('\n').trim();
+
     if (fullText.length > 0) {
-      return fullText;
+      return {
+        text: fullText,
+        hasTextLayer: true,
+        isScannedImageOnly: false,
+        pageCount,
+      };
+    }
+
+    // If zero selectable text items exist across pages, this is a scanned/image-only PDF
+    if (totalItemsFound === 0) {
+      return {
+        text: '',
+        hasTextLayer: false,
+        isScannedImageOnly: true,
+        pageCount,
+        unsupportedOcrReason:
+          'Bu belge taranmış/fotoğraf formatında (görüntü tabanlı) bir PDF’tir ve seçilebilir dijital metin katmanı içermemektedir. Görsel OCR (Optik Karakter Tanıma) desteklenmemektedir; lütfen orijinal metin katmanlı PDF yükleyin veya manuel eşleştirme kullanın.',
+      };
     }
   } catch (err) {
     errorDetails = err instanceof Error ? err.message : String(err);
@@ -59,9 +91,19 @@ export async function extractTextFromPdf(input: File | ArrayBuffer): Promise<str
 
     const matches = rawString.match(/\(([^()]{2,80})\)\s*T[jJ]/g);
     if (matches && matches.length > 0) {
-      return matches
+      const fallbackText = matches
         .map((m) => m.replace(/^\(/, '').replace(/\)\s*T[jJ]$/, ''))
-        .join(' ');
+        .join(' ')
+        .trim();
+
+      if (fallbackText) {
+        return {
+          text: fallbackText,
+          hasTextLayer: true,
+          isScannedImageOnly: false,
+          pageCount,
+        };
+      }
     }
   } catch {
     // binary parse fallback
@@ -71,7 +113,14 @@ export async function extractTextFromPdf(input: File | ArrayBuffer): Promise<str
     throw new Error(`PDF metni okunamadı: ${errorDetails}`);
   }
 
-  return '';
+  return {
+    text: '',
+    hasTextLayer: false,
+    isScannedImageOnly: true,
+    pageCount,
+    unsupportedOcrReason:
+      'PDF içinde seçilebilir metin katmanı bulunamadı (taranmış görsel olabilir).',
+  };
 }
 
 export interface PdfScanProgress {
@@ -79,10 +128,12 @@ export interface PdfScanProgress {
   total: number;
   currentFileName: string;
   detectedStudentName?: string;
+  isScannedImage?: boolean;
   errors?: string[];
 }
 
-export type OcrScanProgress = PdfScanProgress; // Backwards compatibility
+// Backwards compatibility alias
+export type OcrScanProgress = PdfScanProgress;
 
 /**
  * Searches the extracted PDF text to find matching student names.
@@ -116,21 +167,25 @@ export function findStudentInPdfText(
   return null;
 }
 
+export interface DeepScanResult {
+  updatedMatches: MatchedItem[];
+  matchedCount: number;
+  scannedImagePdfs: string[];
+  errors: string[];
+}
+
 /**
- * Performs deep content text analysis across all PDF files for unmatched students.
+ * Performs deep content text analysis across PDF files for unmatched students,
+ * accurately flagging scanned image-only files that require image OCR.
  */
 export async function performDeepPdfContentMatching(
   currentMatches: MatchedItem[],
   allPdfs: LocalPdfFile[],
   onProgress?: (progress: PdfScanProgress) => void
-): Promise<{
-  updatedMatches: MatchedItem[];
-  matchedCount: number;
-  errors: string[];
-}> {
+): Promise<DeepScanResult> {
   const missingStudentItems = currentMatches.filter((item) => item.status === 'missing_pdf');
   if (missingStudentItems.length === 0) {
-    return { updatedMatches: currentMatches, matchedCount: 0, errors: [] };
+    return { updatedMatches: currentMatches, matchedCount: 0, scannedImagePdfs: [], errors: [] };
   }
 
   const assignedPdfNames = new Set(
@@ -139,12 +194,13 @@ export async function performDeepPdfContentMatching(
 
   const unassignedPdfs = allPdfs.filter((pdf) => !assignedPdfNames.has(pdf.name));
   if (unassignedPdfs.length === 0) {
-    return { updatedMatches: currentMatches, matchedCount: 0, errors: [] };
+    return { updatedMatches: currentMatches, matchedCount: 0, scannedImagePdfs: [], errors: [] };
   }
 
   const remainingStudents = missingStudentItems.map((item) => item.student);
   const newlyMatched: Record<string, { pdf: LocalPdfFile; student: Student }> = {};
   const scanErrors: string[] = [];
+  const scannedImagePdfs: string[] = [];
 
   let current = 0;
   const total = unassignedPdfs.length;
@@ -165,8 +221,22 @@ export async function performDeepPdfContentMatching(
 
     if (!textContent && pdf.file) {
       try {
-        textContent = await extractTextFromPdf(pdf.file);
+        const extraction = await extractTextFromPdf(pdf.file);
+        textContent = extraction.text;
         pdf.extractedText = textContent;
+
+        if (extraction.isScannedImageOnly) {
+          scannedImagePdfs.push(pdf.name);
+          if (onProgress) {
+            onProgress({
+              current,
+              total,
+              currentFileName: pdf.name,
+              isScannedImage: true,
+              errors: scanErrors,
+            });
+          }
+        }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         scanErrors.push(`${pdf.name}: ${msg}`);
@@ -215,7 +285,7 @@ export async function performDeepPdfContentMatching(
             : ('invalid_phone' as const),
         matchMethod: 'text_extraction' as const,
         confidenceScore: 80,
-        matchReason: 'PDF içi metin taraması ile tespit edildi',
+        matchReason: 'PDF içi metin katmanı taraması ile tespit edildi',
       };
     }
     return item;
@@ -224,6 +294,7 @@ export async function performDeepPdfContentMatching(
   return {
     updatedMatches,
     matchedCount: Object.keys(newlyMatched).length,
+    scannedImagePdfs,
     errors: scanErrors,
   };
 }

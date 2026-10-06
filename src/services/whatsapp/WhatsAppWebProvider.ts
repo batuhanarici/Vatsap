@@ -9,9 +9,10 @@ export class WhatsAppWebProvider implements WhatsAppProvider {
     return {
       state: 'connected',
       sessionId: 'web_session',
-      sessionName: 'WhatsApp Web Yardımlı Gönderim',
-      details: 'WhatsApp Web Yardımlı Gönderim — Sohbet penceresi açılır, mesaj aktarılır. PDF dosyasını sohbete eklemeniz gerekir.',
-      phoneConnected: 'WhatsApp Web (Tarayıcı)',
+      sessionName: 'WhatsApp Web (Yardımlı Gönderim)',
+      details:
+        'WhatsApp Web Yardımlı Gönderim — Tarayıcıda veli sohbeti ve taslak mesaj açılır. Web tarayıcısı üzerinden PDF otomatik gönderilemez; belgenin manuel olarak sohbete sürüklenmesi gerekir.',
+      phoneConnected: 'WhatsApp Web (Yardımlı Mod)',
       lastCheckedAt: now,
     };
   }
@@ -31,10 +32,11 @@ export class WhatsAppWebProvider implements WhatsAppProvider {
         window.location.href = url;
       }
       return {
-        success: true,
+        success: false, // Sekme açıldı ancak WhatsApp Web üzerinden gerçek gönderim doğrulanamaz
         outcome: 'partial_success',
-        messageSent: true,
+        messageSent: false,
         pdfSent: false,
+        error: 'WhatsApp Web sohbet sekmesi açıldı. Gönder butonuna manuel basılması gereklidir.',
         attempts: 1,
       };
     } catch (err) {
@@ -54,6 +56,7 @@ export class WhatsAppWebProvider implements WhatsAppProvider {
    * 1. Karnenin ilk sayfasını panoya kopyalar (Cmd+V / Ctrl+V için)
    * 2. Velinin WhatsApp sohbetini mesaj metni doldurulmuş olarak açar
    * 3. PDF'nin sohbete iliştirilmesi kullanıcı yardımıyla tamamlanır
+   * Not: Tarayıcı güvenlik kısıtlamaları nedeniyle web linki üzerinden PDF otomatik gönderilemez.
    */
   async sendDocument(
     phone: string,
@@ -79,11 +82,13 @@ export class WhatsAppWebProvider implements WhatsAppProvider {
       if (!win) {
         window.location.href = url;
       }
+      // DİKKAT: WhatsApp Web otomatik PDF gönderemez. Kullanıcıya açıkça bildirilir.
       return {
-        success: true,
-        outcome: 'partial_success', // Assisted mode: chat opened with text, file needs user attachment
-        messageSent: true,
+        success: false, // Gerçek başarı değildir; PDF iletilemedi
+        outcome: 'partial_success',
+        messageSent: false,
         pdfSent: false,
+        error: `WhatsApp Web üzerinden PDF otomatik gönderilemez. Sohbet sekmesi açıldı; lütfen "${fileName}" karnesini sohbete manuel ekleyiniz.`,
         attempts: 1,
       };
     } catch (err) {

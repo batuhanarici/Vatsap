@@ -383,7 +383,7 @@ export const SendConfirmModal: React.FC<SendConfirmModalProps> = ({
               <span>WhatsApp PDF İletimi Hakkında Bilgi</span>
             </div>
             <p className="text-[11px] leading-relaxed text-indigo-900/90 dark:text-indigo-300/90">
-              <strong>WhatsApp Web Modu:</strong> Web tarayıcı güvenlik standardı gereği harici linkler üzerinden WhatsApp&apos;a otomatik dosya enjekte edilemez. Sohbet açıldığında PDF belgesini <strong>WhatsApp ekranına sürükleyip bırakarak</strong> veya sol alttaki <strong>&quot;+&quot; (Ataş) ➔ Belge</strong> seçeneğiyle ekleyebilirsiniz.
+              <strong>WhatsApp Web (Yardımlı Gönderim):</strong> Web tarayıcı güvenlik kuralları gereği harici linkler üzerinden WhatsApp&apos;a otomatik dosya enjekte edilemez. Bu modda PDF veliye doğrudan gitmez; veli sohbet sekmesi açıldığında PDF belgesini <strong>WhatsApp ekranına sürükleyip bırakarak</strong> manuel göndermeniz gerekir.
             </p>
             <p className="text-[11px] leading-relaxed text-emerald-800 dark:text-emerald-300 font-medium">
               💡 <strong>Tam Otomatik PDF Eki:</strong> Herhangi bir sekme açmadan PDF&apos;lerin veliye doğrudan yeşil dosya eki olarak gitmesi için <strong>Ayarlar ➔ OpenWA / Docker</strong> modunu kullanabilirsiniz.

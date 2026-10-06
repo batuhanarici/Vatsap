@@ -296,7 +296,15 @@ export const HistoryTable: React.FC<HistoryTableProps> = ({
                       {item.status === 'success' ? (
                         <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
                           <CheckCircle2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                          <span>İletildi</span>
+                          <span>Tamamlandı</span>
+                        </span>
+                      ) : item.status === 'partial_success' ? (
+                        <span
+                          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800"
+                          title={item.errorMessage || 'Yardımlı sekme açıldı, PDF otomatik eklenemedi'}
+                        >
+                          <AlertCircle className="w-3 h-3 text-amber-600 dark:text-amber-400" />
+                          <span>Yardımlı (PDF Eklenmedi)</span>
                         </span>
                       ) : (
                         <span

@@ -14,6 +14,12 @@ export interface OpenWAResponse<T = unknown> {
   error?: string;
 }
 
+export interface ElectronSecureStorage {
+  isAvailable: () => Promise<boolean>;
+  encrypt: (plainText: string) => Promise<string>;
+  decrypt: (cipherText: string) => Promise<string>;
+}
+
 export interface ElectronAPI {
   isElectron: boolean;
   openDirectoryDialog: () => Promise<{
@@ -22,6 +28,7 @@ export interface ElectronAPI {
   } | null>;
   readPdfBase64: (filePath: string) => Promise<string>;
   requestOpenWA: <T = unknown>(options: OpenWARequestOptions) => Promise<OpenWAResponse<T>>;
+  secureStorage?: ElectronSecureStorage;
 }
 
 declare global {

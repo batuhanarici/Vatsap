@@ -79,6 +79,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   // General fields
   const [delaySeconds, setDelaySeconds] = useState(config.delaySeconds || 3);
+  const [maxRetries, setMaxRetries] = useState(config.maxRetries ?? 2);
+  const [retryDelaySeconds, setRetryDelaySeconds] = useState(config.retryDelaySeconds ?? 2);
   const [schoolName, setSchoolName] = useState(config.schoolName || 'Özel Başarı Okulları');
   const [examName, setExamName] = useState(config.examName || 'Genel Değerlendirme Sınavı');
   const [showKey, setShowKey] = useState(false);
@@ -103,6 +105,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setMetaToken(config.metaToken || '');
       setMetaPhoneNumberId(config.metaPhoneNumberId || '');
       setDelaySeconds(config.delaySeconds || 3);
+      setMaxRetries(config.maxRetries ?? 2);
+      setRetryDelaySeconds(config.retryDelaySeconds ?? 2);
       setSchoolName(config.schoolName || 'Özel Başarı Okulları');
       setExamName(config.examName || 'Genel Değerlendirme Sınavı');
       setFeedback(null);
@@ -133,6 +137,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         metaToken: metaToken.trim(),
         metaPhoneNumberId: metaPhoneNumberId.trim(),
         delaySeconds: Number(delaySeconds) || 3,
+        maxRetries: Number(maxRetries) || 2,
+        retryDelaySeconds: Number(retryDelaySeconds) || 2,
         schoolName: schoolName.trim(),
         examName: examName.trim(),
       };
@@ -337,23 +343,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               WhatsApp Gönderim Yöntemi Seçin:
             </label>
             <div className="grid grid-cols-3 gap-2">
-              {/* WhatsApp Web (No API key needed) */}
+              {/* WhatsApp Web (Yardımlı Gönderim - Manuel PDF Eki) */}
               <button
                 type="button"
                 onClick={() => setProviderType('whatsapp_web')}
                 className={`flex flex-col items-center justify-center text-center p-3 rounded-lg border text-xs font-medium transition-all cursor-pointer ${
                   providerType === 'whatsapp_web'
-                    ? 'border-emerald-600 bg-emerald-50/60 dark:bg-emerald-950/60 text-emerald-900 dark:text-emerald-200 ring-1 ring-emerald-600'
+                    ? 'border-amber-600 bg-amber-50/60 dark:bg-amber-950/60 text-amber-900 dark:text-amber-200 ring-1 ring-amber-600'
                     : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 hover:border-neutral-300 dark:hover:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-700/60'
                 }`}
               >
-                <Globe className={`w-5 h-5 mb-1.5 ${providerType === 'whatsapp_web' ? 'text-emerald-600 dark:text-emerald-400' : 'text-neutral-400'}`} />
+                <Globe className={`w-5 h-5 mb-1.5 ${providerType === 'whatsapp_web' ? 'text-amber-600 dark:text-amber-400' : 'text-neutral-400'}`} />
                 <span className="font-semibold">WhatsApp Web</span>
                 <span className="text-[10px] text-neutral-500 dark:text-neutral-400 mt-0.5 font-normal">
-                  Sıfır Kurulum (API Yok)
+                  Yardımlı Gönderim
                 </span>
-                <span className="mt-1 px-1.5 py-0.2 bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-200 text-[9px] font-semibold rounded">
-                  Önerilen
+                <span className="mt-1 px-1.5 py-0.2 bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-200 text-[9px] font-semibold rounded">
+                  Manuel PDF Eki
                 </span>
               </button>
 
@@ -370,7 +376,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <Zap className={`w-5 h-5 mb-1.5 ${providerType === 'meta_cloud' ? 'text-blue-600 dark:text-blue-400' : 'text-neutral-400'}`} />
                 <span className="font-semibold">Meta Cloud API</span>
                 <span className="text-[10px] text-neutral-500 dark:text-neutral-400 mt-0.5 font-normal">
-                  Resmi Meta Token
+                  Resmi Meta Media API
+                </span>
+                <span className="mt-1 px-1.5 py-0.2 bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 text-[9px] font-semibold rounded">
+                  Otomatik PDF
                 </span>
               </button>
 
@@ -380,14 +389,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 onClick={() => setProviderType('openwa')}
                 className={`flex flex-col items-center justify-center text-center p-3 rounded-lg border text-xs font-medium transition-all cursor-pointer ${
                   providerType === 'openwa'
-                    ? 'border-neutral-900 dark:border-white bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-white ring-1 ring-neutral-900 dark:ring-white'
+                    ? 'border-emerald-700 dark:border-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-950 dark:text-emerald-100 ring-1 ring-emerald-700 dark:ring-emerald-400'
                     : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 hover:border-neutral-300 dark:hover:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-700/60'
                 }`}
               >
-                <Server className={`w-5 h-5 mb-1.5 ${providerType === 'openwa' ? 'text-neutral-900 dark:text-white' : 'text-neutral-400'}`} />
+                <Server className={`w-5 h-5 mb-1.5 ${providerType === 'openwa' ? 'text-emerald-600 dark:text-emerald-400' : 'text-neutral-400'}`} />
                 <span className="font-semibold">OpenWA / Docker</span>
                 <span className="text-[10px] text-neutral-500 dark:text-neutral-400 mt-0.5 font-normal">
-                  Tam Otomatik PDF Eki
+                  Yerel Gateway
+                </span>
+                <span className="mt-1 px-1.5 py-0.2 bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-200 text-[9px] font-semibold rounded">
+                  Tam Otomatik PDF
                 </span>
               </button>
             </div>
@@ -476,16 +488,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <form onSubmit={handleSave} className="space-y-4">
             {/* 1. WHATSAPP WEB MODE */}
             {providerType === 'whatsapp_web' && (
-              <div className="p-4 bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-lg space-y-2 text-xs text-emerald-950 dark:text-emerald-200">
-                <div className="flex items-center gap-2 font-semibold text-emerald-900 dark:text-emerald-300">
-                  <Globe className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                  <span>WhatsApp Web Otomatik Gönderim (API Gerektirmez)</span>
+              <div className="p-4 bg-amber-50/60 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg space-y-2 text-xs text-amber-950 dark:text-amber-200">
+                <div className="flex items-center gap-2 font-semibold text-amber-900 dark:text-amber-300">
+                  <Globe className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                  <span>WhatsApp Web Yardımlı Gönderim (Manuel PDF Eki Gerekir)</span>
                 </div>
-                <p className="text-[11px] leading-relaxed text-emerald-900/90 dark:text-emerald-300/80">
-                  Bu modda hiçbir sunucu, Docker veya API anahtarına ihtiyaç duyulmaz. Sistem velinin numarasına göre WhatsApp Web sohbetini otomatik açar.
+                <p className="text-[11px] leading-relaxed text-amber-900/90 dark:text-amber-300/80">
+                  Bu yöntem <strong>tam otomatik değildir</strong>. Web tarayıcısı üzerinden velinin sohbetini açar ve mesaj metnini hazırlar. Ancak tarayıcı güvenlik kısıtlamaları nedeniyle PDF dosyası WhatsApp Web&apos;e otomatik olarak eklenemez.
                 </p>
-                <div className="p-2 bg-emerald-100/60 dark:bg-emerald-900/40 rounded border border-emerald-300/50 dark:border-emerald-700/50 text-[11px] space-y-1">
-                  <strong>💡 PDF Eki İpucu:</strong> WhatsApp güvenlik kuralları gereği harici web linkleri otomatik dosya yükleyemez. Sohbet açıldığında PDF&apos;i pencereye sürükleyip bırakarak veya sol alttaki <strong>&quot;+&quot; ➔ Belge</strong> seçeneğiyle ekleyebilirsiniz.
+                <div className="p-2.5 bg-amber-100/70 dark:bg-amber-900/50 rounded border border-amber-300/60 dark:border-amber-700/60 text-[11px] space-y-1.5">
+                  <div className="font-semibold text-amber-950 dark:text-amber-200 flex items-center gap-1">
+                    <Info className="w-3.5 h-3.5 text-amber-700 dark:text-amber-400" />
+                    <span>PDF Neden Otomatik Gönderilemez?</span>
+                  </div>
+                  <p className="text-amber-900/90 dark:text-amber-300/90 leading-relaxed">
+                    WhatsApp Web web protokolü (`https://web.whatsapp.com/send?phone=...&amp;text=...`) yalnızca metin kabul eder. Sohbet açıldığında ilgili öğrencinin PDF karnesini <strong>sohbet penceresine sürükleyip bırakmanız</strong> ve Gönder butonuna basmanız gerekmektedir.
+                  </p>
+                  <p className="text-[10px] text-amber-800 dark:text-amber-400 font-medium">
+                    💡 <em>PDF karnelerin arka planda doğrudan gerçek ek olarak gitmesi için yukarıdaki <strong>OpenWA / Docker</strong> modunu tercih ediniz.</em>
+                  </p>
                 </div>
               </div>
             )}
@@ -705,22 +726,52 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1">
-                  Gönderimler Arası Güvenlik Gecikmesi (Saniye)
-                </label>
-                <div className="flex items-center gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                    Güvenlik Gecikmesi (sn)
+                  </label>
                   <input
                     type="number"
                     min="1"
                     max="30"
                     value={delaySeconds}
                     onChange={(e) => setDelaySeconds(Number(e.target.value))}
-                    className="w-24 px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg text-xs font-mono text-neutral-900 dark:text-neutral-100 focus:outline-hidden focus:ring-1 focus:ring-neutral-900 dark:focus:ring-neutral-400 bg-white dark:bg-neutral-800"
+                    className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg text-xs font-mono text-neutral-900 dark:text-neutral-100 focus:outline-hidden focus:ring-1 focus:ring-neutral-900 dark:focus:ring-neutral-400 bg-white dark:bg-neutral-800"
                   />
-                  <span className="text-[11px] text-neutral-500">
-                    Önerilen: 3-5 saniye (Spam engelini önler)
-                  </span>
+                  <span className="text-[10px] text-neutral-400 block mt-0.5">Önerilen: 3-5 sn</span>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                    Otomatik Retry (Tekrar)
+                  </label>
+                  <select
+                    value={maxRetries}
+                    onChange={(e) => setMaxRetries(Number(e.target.value))}
+                    className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg text-xs font-medium text-neutral-900 dark:text-neutral-100 focus:outline-hidden focus:ring-1 focus:ring-neutral-900 dark:focus:ring-neutral-400 bg-white dark:bg-neutral-800 cursor-pointer"
+                  >
+                    <option value={1}>1 Kez Yeniden Dene</option>
+                    <option value={2}>2 Kez Yeniden Dene (Önerilen)</option>
+                    <option value={3}>3 Kez Yeniden Dene</option>
+                    <option value={5}>5 Kez Yeniden Dene</option>
+                  </select>
+                  <span className="text-[10px] text-neutral-400 block mt-0.5">Başarısız iletimde</span>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                    Retry Bekleme Süresi (sn)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="15"
+                    value={retryDelaySeconds}
+                    onChange={(e) => setRetryDelaySeconds(Number(e.target.value))}
+                    className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg text-xs font-mono text-neutral-900 dark:text-neutral-100 focus:outline-hidden focus:ring-1 focus:ring-neutral-900 dark:focus:ring-neutral-400 bg-white dark:bg-neutral-800"
+                  />
+                  <span className="text-[10px] text-neutral-400 block mt-0.5">Denemeler arası ara</span>
                 </div>
               </div>
             </div>

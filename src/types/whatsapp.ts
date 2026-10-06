@@ -48,6 +48,8 @@ export interface OpenWAConfig {
   examName?: string;
   metaToken?: string;
   metaPhoneNumberId?: string;
+  maxRetries?: number;
+  retryDelaySeconds?: number;
 }
 
 export interface MessageTemplate {

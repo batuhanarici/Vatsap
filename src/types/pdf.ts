@@ -14,10 +14,11 @@ export interface LocalPdfFile {
 export type MatchingStatus = 'ready' | 'missing_pdf' | 'invalid_phone' | 'pending_confirmation';
 
 export type SendingStatus = 
-  | 'idle' 
-  | 'waiting' 
-  | 'sending_message' 
+  | 'idle'
+  | 'pending'
+  | 'validating'
   | 'sending_pdf' 
+  | 'sending_message' 
   | 'retrying'
   | 'success' 
   | 'partial_success'
