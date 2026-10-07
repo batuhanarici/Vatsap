@@ -5,6 +5,12 @@ const os = require('os');
 const net = require('net');
 const { exec, spawn } = require('child_process');
 const { promisify } = require('util');
+const {
+  registerAllowedDirectory,
+  validatePdfPath,
+  validateOpenWaRequest,
+  validateDockerHealthOptions,
+} = require('./security.cjs');
 
 const execAsync = promisify(exec);
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
@@ -116,6 +122,9 @@ ipcMain.handle('dialog:openDirectory', async () => {
   }
   const folderPath = result.filePaths[0];
 
+  // Register in security jail whitelist
+  registerAllowedDirectory(folderPath);
+
   // Scan folder for .pdf files
   try {
     const files = fs.readdirSync(folderPath);
@@ -139,12 +148,18 @@ ipcMain.handle('dialog:openDirectory', async () => {
 });
 
 ipcMain.handle('file:readBase64', async (_, filePath) => {
+  const validation = validatePdfPath(filePath);
+  if (!validation.valid) {
+    console.error(`[Security] file:readBase64 erişim reddedildi: ${validation.error}`);
+    throw new Error(validation.error || 'Dosya okunamadı veya erişim reddedildi.');
+  }
+
   try {
-    const buffer = fs.readFileSync(filePath);
+    const buffer = fs.readFileSync(validation.canonicalPath);
     return buffer.toString('base64');
   } catch (err) {
-    console.error('Dosya okunamadı:', err);
-    throw err;
+    console.error('[Security] Dosya okunamadı:', err.message);
+    throw new Error('Dosya okunamadı veya erişim reddedildi.');
   }
 });
 
@@ -181,12 +196,20 @@ ipcMain.handle('secure:decrypt', (_, cipherTextBase64) => {
   return cipherTextBase64;
 });
 
-// IPC Handler for OpenWA HTTP API requests (Bypasses Chromium CORS and sandbox network hurdles)
+// IPC Handler for OpenWA HTTP API requests (Hardened: Loopback 2785 only, no arbitrary network/headers)
 ipcMain.handle('openwa:request', async (_, options) => {
-  const { url, method = 'GET', headers = {}, body, timeoutMs = 15000 } = options || {};
-  if (!url) {
-    return { ok: false, status: 400, error: 'URL parametresi belirtilmedi.' };
+  const validation = validateOpenWaRequest(options);
+  if (!validation.valid) {
+    console.error(`[Security] openwa:request engellendi: ${validation.error}`);
+    return {
+      ok: false,
+      status: 403,
+      statusText: 'Forbidden',
+      error: validation.error,
+    };
   }
+
+  const { url, method, headers, body, timeoutMs } = validation.sanitizedOptions;
 
   const controller = new AbortController();
   const timer = setTimeout(() => {
@@ -194,22 +217,14 @@ ipcMain.handle('openwa:request', async (_, options) => {
   }, timeoutMs);
 
   try {
-    const fetchHeaders = {
-      Accept: 'application/json',
-      ...headers,
-    };
-
     const fetchOptions = {
       method,
-      headers: fetchHeaders,
+      headers,
       signal: controller.signal,
     };
 
-    if (body && ['POST', 'PUT', 'PATCH'].includes(method.toUpperCase())) {
-      fetchOptions.body = typeof body === 'string' ? body : JSON.stringify(body);
-      if (!fetchHeaders['Content-Type']) {
-        fetchHeaders['Content-Type'] = 'application/json';
-      }
+    if (body && ['POST', 'PUT', 'PATCH'].includes(method)) {
+      fetchOptions.body = body;
     }
 
     const response = await fetch(url, fetchOptions);
@@ -243,14 +258,14 @@ ipcMain.handle('openwa:request', async (_, options) => {
       statusText: isAbort ? 'Timeout' : 'NetworkError',
       error: isAbort
         ? `OpenWA sunucusu ${timeoutMs}ms içinde yanıt vermedi (Zaman aşımı).`
-        : `OpenWA servisine (${url}) ulaşılamadı: ${err.message}`,
+        : 'OpenWA servisine ulaşılamadı.',
     };
   }
 });
 
-// IPC Handler: Comprehensive 5-Stage Docker & OpenWA Health Diagnostic (macOS Native)
-ipcMain.handle('docker:healthCheck', async (_, options) => {
-  const { baseUrl = 'http://127.0.0.1:2785/api', apiKey = '' } = options || {};
+// IPC Handler: Comprehensive 5-Stage Docker & OpenWA Health Diagnostic (macOS Native, Hardened)
+ipcMain.handle('docker:healthCheck', async (_, rawOptions) => {
+  const { baseUrl, apiKey } = validateDockerHealthOptions(rawOptions);
 
   const diagnostic = {
     dockerInstalled: false,
