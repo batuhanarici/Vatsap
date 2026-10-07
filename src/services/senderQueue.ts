@@ -46,6 +46,7 @@ export interface QueueOptions {
   maxRetries?: number; // default 2
   retryDelayMs?: number; // default 2000ms
   preventDuplicateSends?: boolean; // default true
+  sendToSecondaryParents?: boolean; // default false (sends copy to 2nd parent if exists)
   context?: TemplateContext;
   onProgress: (event: QueueProgressEvent) => void;
   onItemUpdated: (updatedItem: MatchedItem) => void;
@@ -81,6 +82,7 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
     maxRetries = 2,
     retryDelayMs = 2000,
     preventDuplicateSends = true,
+    sendToSecondaryParents = false,
     context,
     onProgress,
     onItemUpdated,
@@ -409,6 +411,36 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
         messageSent: true,
         examName: context?.examName,
       });
+
+      // Optional Multi-Parent Delivery: Send to 2nd parent if available
+      if (sendToSecondaryParents && student.secondaryPhone && !isCancelled()) {
+        try {
+          await sleep(1500); // Friendly inter-message pause
+          const secResult = await provider.sendDocument(
+            student.secondaryPhone,
+            base64,
+            targetPdfFileName,
+            messageText
+          );
+          storageService.addHistoryItem({
+            id: `hist_sec_${Date.now()}_${student.id}`,
+            studentName: `${student.studentName} (2. Veli)`,
+            parentName: `${student.parentName} (2. Veli)`,
+            maskedPhone: maskPhoneNumber(student.secondaryPhone),
+            phone: student.secondaryPhone,
+            pdfFileName: targetPdfFileName,
+            date: new Date().toISOString(),
+            status: secResult.success ? 'success' : 'failed',
+            outcome: secResult.success ? 'success' : 'failed',
+            pdfSent: secResult.pdfSent,
+            messageSent: secResult.messageSent,
+            examName: context?.examName,
+            errorMessage: secResult.error,
+          });
+        } catch (secErr) {
+          console.error('2. Veli gönderim hatası:', secErr);
+        }
+      }
     } else if (isFallbackTextOnly || sendResult.outcome === 'partial_success') {
       // Transition -> [partial_success]
       currentItem.sendingStatus = 'partial_success';

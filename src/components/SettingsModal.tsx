@@ -17,6 +17,14 @@ import {
   Check,
   Loader2,
   Terminal,
+  Database,
+  Download,
+  Upload,
+  Activity,
+  Cpu,
+  Layers,
+  Sparkles,
+  AlertTriangle,
 } from 'lucide-react';
 
 export interface StartSessionParams {
@@ -51,6 +59,8 @@ interface SettingsModalProps {
   onStartSession: (
     params: StartSessionParams
   ) => Promise<{ success: boolean; sessionUuid?: string; error?: string } | boolean>;
+  onInitiateImportBackup?: (fileName: string, jsonString: string) => void;
+  onExportBackup?: (includeSecrets?: boolean) => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -63,6 +73,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   isChecking,
   qrCodeUrl,
   onStartSession,
+  onInitiateImportBackup,
+  onExportBackup,
 }) => {
   const [providerType, setProviderType] = useState<WhatsAppProviderType>(
     config.providerType || 'openwa'
@@ -94,6 +106,39 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const [copiedDockerCmd, setCopiedDockerCmd] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [includeSecretsInExport, setIncludeSecretsInExport] = useState(false);
+  const backupFileInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Comprehensive Docker 5-stage Diagnostic States
+  const [diagnostic, setDiagnostic] = useState<{
+    dockerInstalled: boolean;
+    dockerRunning: boolean;
+    containerRunning: boolean;
+    containerName: string;
+    portOpen: boolean;
+    apiKeyValid: boolean;
+    sessionReady: boolean;
+    checkedAt: string;
+    stepNotes: string[];
+  } | null>(null);
+  const [isRunningDiagnostic, setIsRunningDiagnostic] = useState(false);
+
+  // App Update States
+  const [updateInfo, setUpdateInfo] = useState<{
+    currentVersion: string;
+    latestVersion: string;
+    hasUpdate: boolean;
+    releaseNotes: string;
+    downloads: {
+      appleSilicon: string;
+      intelMac: string;
+      universalMac: string;
+    };
+  } | null>(null);
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+
+  // macOS LaunchAgent States
+  const [isInstallingAgent, setIsInstallingAgent] = useState(false);
 
   // Sync state on open
   useEffect(() => {
@@ -269,6 +314,79 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     navigator.clipboard.writeText(cmd);
     setCopiedDockerCmd(true);
     setTimeout(() => setCopiedDockerCmd(false), 2500);
+  };
+
+  const handleRunDockerDiagnostic = async () => {
+    setIsRunningDiagnostic(true);
+    try {
+      if (typeof window !== 'undefined' && window.electronAPI?.checkDockerHealth) {
+        const res = await window.electronAPI.checkDockerHealth({ baseUrl, apiKey });
+        if (res && res.diagnostic) {
+          setDiagnostic(res.diagnostic);
+        }
+      } else {
+        const res = await fetch(`/api/docker-health?url=${encodeURIComponent(baseUrl)}`, {
+          headers: apiKey ? { 'X-API-Key': apiKey } : {},
+        });
+        const json = await res.json();
+        if (json && json.diagnostic) {
+          setDiagnostic(json.diagnostic);
+        }
+      }
+    } catch (err: unknown) {
+      setDiagnostic({
+        dockerInstalled: false,
+        dockerRunning: false,
+        containerRunning: false,
+        containerName: '',
+        portOpen: false,
+        apiKeyValid: false,
+        sessionReady: false,
+        checkedAt: new Date().toISOString(),
+        stepNotes: [
+          'Teşhis sırasında hata oluştu: ' + (err instanceof Error ? err.message : String(err)),
+        ],
+      });
+    } finally {
+      setIsRunningDiagnostic(false);
+    }
+  };
+
+  const handleCheckUpdate = async () => {
+    setIsCheckingUpdate(true);
+    try {
+      if (typeof window !== 'undefined' && window.electronAPI?.checkUpdate) {
+        const res = await window.electronAPI.checkUpdate();
+        setUpdateInfo(res);
+      } else {
+        const res = await fetch('/api/check-update');
+        const json = await res.json();
+        setUpdateInfo(json);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setIsCheckingUpdate(false);
+    }
+  };
+
+  const handleInstallLaunchAgent = async () => {
+    if (typeof window !== 'undefined' && window.electronAPI?.installLaunchAgent) {
+      setIsInstallingAgent(true);
+      const res = await window.electronAPI.installLaunchAgent();
+      setIsInstallingAgent(false);
+      if (res.success) {
+        alert(
+          `✅ macOS LaunchAgent servisi başarıyla kuruldu!\n\nDosya: ${res.plistPath}\n\nUygulama kapalı olsa dahi zamanlanmış gönderim saati geldiğinde uygulama otomatik uyandırılacaktır.`
+        );
+      } else {
+        alert(`LaunchAgent kurulum hatası: ${res.error}`);
+      }
+    } else {
+      alert(
+        'LaunchAgent yalnızca macOS masaüstü Electron uygulamasında kurulabilir. Terminal üzerinden ~/Library/LaunchAgents/ dizinine com.batuhan.karnegonderici.schedule.plist ekleyebilirsiniz.'
+      );
+    }
   };
 
   const getStatusColor = () => {
@@ -637,6 +755,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <p className="text-[10px] text-neutral-400 mt-1">
                     Not: Yerel docker sunucunuzda anahtar yoksa boş bırakabilirsiniz.
                   </p>
+                  {typeof window !== 'undefined' && window.electronAPI?.isElectron ? (
+                    <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 p-1.5 rounded border border-emerald-200 dark:border-emerald-800">
+                      <span>🔒</span>
+                      <span>macOS Keychain &amp; Electron safeStorage ile donanım düzeyinde şifrelenerek saklanır.</span>
+                    </div>
+                  ) : (
+                    <div className="mt-1.5 flex items-start gap-1.5 text-[10px] text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 p-1.5 rounded border border-amber-200 dark:border-amber-800">
+                      <span>⚠️</span>
+                      <span>
+                        Web Tarayıcısı Uyarısı: API anahtarı tarayıcı yerel hafızasında tutulur. macOS Keychain donanım şifrelemesi için Karne Gönderici masaüstü uygulamasını kullanınız.
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
@@ -683,6 +814,101 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <code className="block p-2 bg-neutral-900 text-neutral-200 rounded text-[10px] font-mono select-all overflow-x-auto">
                     docker run -v $(pwd)/data:/app/data -p 2785:2785 openwa/wa-automate
                   </code>
+                </div>
+
+                {/* 5-Stage Comprehensive Docker Health Diagnostic */}
+                <div className="pt-2 border-t border-neutral-200 dark:border-neutral-700 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-neutral-800 dark:text-neutral-200 flex items-center gap-1.5">
+                      <Activity className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                      <span>Docker &amp; Sistem Sağlık Kontrolü (5 Aşama)</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleRunDockerDiagnostic}
+                      disabled={isRunningDiagnostic}
+                      className="px-2.5 py-1 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded text-[11px] font-semibold transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                    >
+                      {isRunningDiagnostic ? (
+                        <>
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          <span>Taranıyor...</span>
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="w-3 h-3" />
+                          <span>Sağlık Taraması Yap</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {diagnostic && (
+                    <div className="p-2.5 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-lg space-y-2 text-[11px]">
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 text-center">
+                        <div
+                          className={`p-1.5 rounded border ${
+                            diagnostic.dockerRunning
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800'
+                              : 'bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-950/50 dark:text-rose-300 dark:border-rose-800'
+                          }`}
+                        >
+                          <span className="block font-semibold">1. Docker</span>
+                          <span className="text-[10px]">{diagnostic.dockerRunning ? 'Açık' : 'Kapalı'}</span>
+                        </div>
+                        <div
+                          className={`p-1.5 rounded border ${
+                            diagnostic.containerRunning
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800'
+                              : 'bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-950/50 dark:text-rose-300 dark:border-rose-800'
+                          }`}
+                        >
+                          <span className="block font-semibold">2. Konteyner</span>
+                          <span className="text-[10px]">{diagnostic.containerRunning ? 'Çalışıyor' : 'Bulunamadı'}</span>
+                        </div>
+                        <div
+                          className={`p-1.5 rounded border ${
+                            diagnostic.portOpen
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800'
+                              : 'bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-950/50 dark:text-rose-300 dark:border-rose-800'
+                          }`}
+                        >
+                          <span className="block font-semibold">3. Port 2785</span>
+                          <span className="text-[10px]">{diagnostic.portOpen ? 'Erişilebilir' : 'Kapalı'}</span>
+                        </div>
+                        <div
+                          className={`p-1.5 rounded border ${
+                            diagnostic.apiKeyValid
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800'
+                              : 'bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-800'
+                          }`}
+                        >
+                          <span className="block font-semibold">4. API Key</span>
+                          <span className="text-[10px]">{diagnostic.apiKeyValid ? 'Doğrulandı' : 'Hatalı / Yok'}</span>
+                        </div>
+                        <div
+                          className={`p-1.5 rounded border ${
+                            diagnostic.sessionReady
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800'
+                              : 'bg-neutral-100 text-neutral-800 border-neutral-200 dark:bg-neutral-800 dark:text-neutral-300 dark:border-neutral-700'
+                          }`}
+                        >
+                          <span className="block font-semibold">5. Oturum</span>
+                          <span className="text-[10px]">{diagnostic.sessionReady ? 'Bağlı' : 'Bekleniyor'}</span>
+                        </div>
+                      </div>
+                      {diagnostic.stepNotes.length > 0 && (
+                        <ul className="space-y-0.5 text-[10px] text-neutral-600 dark:text-neutral-400 border-t border-neutral-100 dark:border-neutral-800 pt-1.5">
+                          {diagnostic.stepNotes.map((note, idx) => (
+                            <li key={idx} className="flex items-start gap-1">
+                              <span>•</span>
+                              <span>{note}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -772,6 +998,177 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg text-xs font-mono text-neutral-900 dark:text-neutral-100 focus:outline-hidden focus:ring-1 focus:ring-neutral-900 dark:focus:ring-neutral-400 bg-white dark:bg-neutral-800"
                   />
                   <span className="text-[10px] text-neutral-400 block mt-0.5">Denemeler arası ara</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Data & Backup Management */}
+            <div className="pt-3 border-t border-neutral-200 dark:border-neutral-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-xs font-semibold text-neutral-900 dark:text-white flex items-center gap-1.5">
+                    <Database className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                    <span>Veri &amp; Tam Sistem Yedekleme (Backup / Restore)</span>
+                  </h3>
+                  <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5">
+                    Öğrenci listesi, şablonlar, geçmiş kayıtlar ve ayarları içeren tam sistem yedeği alın veya yükleyin.
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3 bg-neutral-50 dark:bg-neutral-800/50 rounded-xl border border-neutral-200 dark:border-neutral-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                <div className="space-y-1">
+                  <span className="font-semibold text-neutral-900 dark:text-neutral-100 flex items-center gap-1">
+                    <Shield className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Güvenli JSON Yedekleme (v1 Şema)</span>
+                  </span>
+                  <p className="text-[11px] text-neutral-500 dark:text-neutral-400 leading-relaxed">
+                    Varsayılan olarak API anahtarı ve özel şifreler güvenlik gerekçesiyle yedek dosyasına dahil edilmez.
+                  </p>
+                  <label className="inline-flex items-center gap-1.5 text-[10px] text-neutral-600 dark:text-neutral-400 cursor-pointer pt-0.5">
+                    <input
+                      type="checkbox"
+                      checked={includeSecretsInExport}
+                      onChange={(e) => setIncludeSecretsInExport(e.target.checked)}
+                      className="rounded text-blue-600"
+                    />
+                    <span>API anahtarını da yedeğe dahil et (Sadece güvenilir şahsi cihazlar)</span>
+                  </label>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  {onExportBackup && (
+                    <button
+                      type="button"
+                      onClick={() => onExportBackup(includeSecretsInExport)}
+                      className="px-3 py-2 bg-white dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 text-neutral-800 dark:text-neutral-200 border border-neutral-300 dark:border-neutral-600 rounded-lg font-semibold text-xs transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs"
+                      title="Sistemin tam JSON yedeğini indirir"
+                    >
+                      <Download className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Yedek İndir</span>
+                    </button>
+                  )}
+
+                  {onInitiateImportBackup && (
+                    <>
+                      <input
+                        type="file"
+                        ref={backupFileInputRef}
+                        accept=".json"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          const reader = new FileReader();
+                          reader.onload = (evt) => {
+                            const text = String(evt.target?.result || '');
+                            onInitiateImportBackup(file.name, text);
+                          };
+                          reader.readAsText(file);
+                          e.target.value = '';
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => backupFileInputRef.current?.click()}
+                        className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold text-xs transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs"
+                        title="Daha önce alınmış bir yedeği önizleyip içe aktarır"
+                      >
+                        <Upload className="w-3.5 h-3.5 text-white" />
+                        <span>Yedekten Geri Yükle</span>
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* App Updates & macOS LaunchAgent Background Service */}
+            <div className="pt-3 border-t border-neutral-200 dark:border-neutral-800 space-y-3">
+              <div>
+                <h3 className="text-xs font-semibold text-neutral-900 dark:text-white flex items-center gap-1.5">
+                  <Cpu className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                  <span>Uygulama Sürümü, Güncellemeler ve macOS Arka Plan Servisi</span>
+                </h3>
+                <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5">
+                  Masaüstü mimarileri (Apple Silicon, Intel x64, Universal) ve arka plan zamanlama servis durumu.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Update check card */}
+                <div className="p-3 bg-neutral-50 dark:bg-neutral-800/50 rounded-xl border border-neutral-200 dark:border-neutral-700 flex flex-col justify-between gap-2 text-xs">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-neutral-900 dark:text-neutral-100">Sürüm: v1.0.0</span>
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300">
+                        Güncel
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-1 leading-relaxed">
+                      Apple Silicon (arm64), Intel Mac (x64) ve Universal derlemeleri desteklenir.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-1 border-t border-neutral-200 dark:border-neutral-700">
+                    <button
+                      type="button"
+                      onClick={handleCheckUpdate}
+                      disabled={isCheckingUpdate}
+                      className="px-2.5 py-1.5 bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded text-[11px] font-medium text-neutral-800 dark:text-neutral-200 transition-colors cursor-pointer flex items-center gap-1"
+                    >
+                      {isCheckingUpdate ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                      <span>Güncellemeleri Denetle</span>
+                    </button>
+
+                    <a
+                      href="https://github.com/batuhan/karne-gonderici/releases"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-0.5"
+                    >
+                      <span>Sürümler</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+
+                  {updateInfo && (
+                    <div className="p-2 bg-white dark:bg-neutral-900 rounded border border-neutral-200 dark:border-neutral-700 text-[10px] space-y-1 mt-1">
+                      <p className="font-medium text-neutral-800 dark:text-neutral-200">{updateInfo.releaseNotes}</p>
+                      <div className="flex items-center gap-2 pt-1">
+                        <a href={updateInfo.downloads.appleSilicon} className="text-indigo-600 dark:text-indigo-400 underline">Apple Silicon</a>
+                        <span>•</span>
+                        <a href={updateInfo.downloads.intelMac} className="text-indigo-600 dark:text-indigo-400 underline">Intel Mac</a>
+                        <span>•</span>
+                        <a href={updateInfo.downloads.universalMac} className="text-indigo-600 dark:text-indigo-400 underline">Universal</a>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* LaunchAgent Card */}
+                <div className="p-3 bg-neutral-50 dark:bg-neutral-800/50 rounded-xl border border-neutral-200 dark:border-neutral-700 flex flex-col justify-between gap-2 text-xs">
+                  <div>
+                    <span className="font-semibold text-neutral-900 dark:text-neutral-100 block">
+                      macOS LaunchAgent Arka Plan Servisi
+                    </span>
+                    <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-1 leading-relaxed">
+                      Uygulama tamamen kapalı olsa dahi, planlanan zamanda Mac arka planında uygulamayı otomatik uyandırır.
+                    </p>
+                  </div>
+
+                  <div className="pt-1 border-t border-neutral-200 dark:border-neutral-700 flex items-center justify-between">
+                    <span className="text-[10px] text-neutral-400">~/Library/LaunchAgents/</span>
+                    <button
+                      type="button"
+                      onClick={handleInstallLaunchAgent}
+                      disabled={isInstallingAgent}
+                      className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[11px] font-semibold transition-colors cursor-pointer flex items-center gap-1 shadow-xs"
+                    >
+                      {isInstallingAgent ? <Loader2 className="w-3 h-3 animate-spin" /> : <Terminal className="w-3 h-3" />}
+                      <span>Servisi Kur / Aktif Et</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

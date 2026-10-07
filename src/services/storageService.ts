@@ -4,6 +4,61 @@ import { OpenWAConfig } from '../types/whatsapp';
 import { MessageTemplate } from '../types/template';
 import { ScheduledDispatch } from '../types/schedule';
 
+export interface FullBackupData {
+  schemaVersion: number;
+  app: 'KarneGonderici';
+  version: string;
+  exportedAt: string;
+  containsSecrets: boolean;
+  students: Student[];
+  templates: MessageTemplate[];
+  activeTemplateId: string;
+  history: HistoryItem[];
+  config: Partial<OpenWAConfig & { testPhone: string; delaySeconds: number; maxRetries: number; retryDelaySeconds: number; examName: string; schoolName: string }>;
+  scheduledDispatch: ScheduledDispatch | null;
+}
+
+export interface BackupValidationStats {
+  studentCount: number;
+  templateCount: number;
+  historyCount: number;
+  hasConfig: boolean;
+  hasSchedule: boolean;
+  schemaVersion: number;
+  version: string;
+  exportedAt: string;
+  containsSecrets: boolean;
+}
+
+export interface BackupValidationResult {
+  isValid: boolean;
+  errors: string[];
+  warnings: string[];
+  data: FullBackupData | null;
+  stats: BackupValidationStats | null;
+}
+
+export interface ImportBackupOptions {
+  mode: 'overwrite' | 'merge';
+  sections: {
+    students: boolean;
+    templates: boolean;
+    history: boolean;
+    config: boolean;
+    schedule: boolean;
+  };
+}
+
+export interface ImportBackupSummary {
+  success: boolean;
+  importedStudentsCount: number;
+  importedTemplatesCount: number;
+  importedHistoryCount: number;
+  configUpdated: boolean;
+  scheduleUpdated: boolean;
+  mode: 'overwrite' | 'merge';
+}
+
 const STUDENTS_STORAGE_KEY = 'karne_gonderici_students';
 const HISTORY_STORAGE_KEY = 'karne_gonderici_history';
 const TEMPLATES_STORAGE_KEY = 'karne_gonderici_templates_v2';
@@ -95,6 +150,9 @@ export const SAMPLE_TEST_STUDENTS: Student[] = [
   { id: '10', studentName: 'Defne Yıldız', parentName: 'Okan Yıldız', phone: '905431110022', group: 'Hafta Sonu Grubu' },
 ];
 
+// In-memory runtime secrets (protected from plain text localStorage dumping)
+const runtimeSecrets: { apiKey?: string; metaToken?: string } = {};
+
 export const storageService = {
   getStudents(): Student[] {
     try {
@@ -132,18 +190,16 @@ export const storageService = {
     const rawConfig = this.getConfig();
     const safeConfig = { ...rawConfig };
 
-    // Security: By default, omit sensitive tokens and keys from backup files
+    // Strict Security: By default, NEVER export API Key or Meta Token in backup files
     if (!includeSecrets) {
-      if (safeConfig.apiKey) {
-        safeConfig.apiKey = '*** Gizli (Dışa aktarmada gizlendi) ***';
-      }
-      if (safeConfig.metaToken) {
-        safeConfig.metaToken = '*** Gizli (Dışa aktarmada gizlendi) ***';
-      }
+      safeConfig.apiKey = '';
+      safeConfig.metaToken = '';
     }
 
-    const backup = {
+    const backup: FullBackupData = {
+      schemaVersion: 1,
       app: 'KarneGonderici',
+      version: '1.0.0',
       exportedAt: new Date().toISOString(),
       containsSecrets: includeSecrets,
       students: this.getStudents(),
@@ -151,26 +207,259 @@ export const storageService = {
       activeTemplateId: this.getActiveTemplateId(),
       history: this.getHistory(),
       config: safeConfig,
+      scheduledDispatch: this.getSchedule(),
     };
     return JSON.stringify(backup, null, 2);
   },
 
-  importFullBackup(jsonString: string): boolean {
+  validateBackupFile(jsonString: string): BackupValidationResult {
+    const errors: string[] = [];
+    const warnings: string[] = [];
+
+    let parsed: any;
     try {
-      const backup = JSON.parse(jsonString);
-      if (backup.students && Array.isArray(backup.students)) {
-        this.saveStudents(backup.students);
-      }
-      if (backup.templates && Array.isArray(backup.templates)) {
-        this.saveTemplates(backup.templates);
-      }
-      if (backup.activeTemplateId) {
-        this.setActiveTemplateId(backup.activeTemplateId);
-      }
-      return true;
+      parsed = JSON.parse(jsonString);
     } catch {
+      return {
+        isValid: false,
+        errors: ['Dosya geçerli bir JSON formatında değil.'],
+        warnings: [],
+        data: null,
+        stats: null,
+      };
+    }
+
+    if (!parsed || typeof parsed !== 'object') {
+      return {
+        isValid: false,
+        errors: ['Yedek verisi geçerli bir JSON nesnesi içermiyor.'],
+        warnings: [],
+        data: null,
+        stats: null,
+      };
+    }
+
+    // App name check
+    if (parsed.app !== 'KarneGonderici') {
+      errors.push('Bu dosya Karne Gönderici uygulamasına ait geçerli bir yedek dosyası değil.');
+    }
+
+    // Schema version check
+    const schemaVersion = typeof parsed.schemaVersion === 'number' ? parsed.schemaVersion : 1;
+    if (schemaVersion > 1) {
+      warnings.push(`Yedek şema versiyonu (${schemaVersion}) mevcut uygulama şemasından (v1) daha yeni olabilir.`);
+    }
+
+    // Students validation
+    const students = Array.isArray(parsed.students) ? parsed.students : [];
+    if (!Array.isArray(parsed.students)) {
+      warnings.push('Yedek dosyasında öğrenci listesi bulunamadı.');
+    } else {
+      const invalidStudents = students.filter((s: any) => !s || typeof s !== 'object' || !s.studentName);
+      if (invalidStudents.length > 0) {
+        warnings.push(`${invalidStudents.length} adet öğrenci kaydında isim bilgisi eksik.`);
+      }
+    }
+
+    // Templates validation
+    const templates = Array.isArray(parsed.templates) ? parsed.templates : [];
+    if (!Array.isArray(parsed.templates)) {
+      warnings.push('Yedek dosyasında şablon listesi bulunamadı.');
+    }
+
+    // History validation
+    const history = Array.isArray(parsed.history) ? parsed.history : [];
+
+    // Config validation
+    const hasConfig = Boolean(parsed.config && typeof parsed.config === 'object');
+    if (hasConfig && (parsed.config.apiKey || parsed.config.metaToken)) {
+      warnings.push('Bu yedek dosyası API anahtarı veya kimlik doğrulama belirteci içermektedir.');
+    }
+
+    const hasSchedule = Boolean(parsed.scheduledDispatch && typeof parsed.scheduledDispatch === 'object');
+
+    const isValid = errors.length === 0;
+
+    const data: FullBackupData = {
+      schemaVersion,
+      app: 'KarneGonderici',
+      version: parsed.version || '1.0.0',
+      exportedAt: parsed.exportedAt || new Date().toISOString(),
+      containsSecrets: Boolean(parsed.containsSecrets || (parsed.config?.apiKey || parsed.config?.metaToken)),
+      students,
+      templates: templates.length > 0 ? templates : DEFAULT_TEMPLATES,
+      activeTemplateId: parsed.activeTemplateId || DEFAULT_TEMPLATES[0].id,
+      history,
+      config: parsed.config || {},
+      scheduledDispatch: hasSchedule ? parsed.scheduledDispatch : null,
+    };
+
+    const stats: BackupValidationStats = {
+      studentCount: students.length,
+      templateCount: templates.length,
+      historyCount: history.length,
+      hasConfig,
+      hasSchedule,
+      schemaVersion,
+      version: parsed.version || '1.0.0',
+      exportedAt: parsed.exportedAt || new Date().toISOString(),
+      containsSecrets: data.containsSecrets,
+    };
+
+    return {
+      isValid,
+      errors,
+      warnings,
+      data: isValid ? data : null,
+      stats: isValid ? stats : null,
+    };
+  },
+
+  importFullBackupWithOptions(data: FullBackupData, options: ImportBackupOptions): ImportBackupSummary {
+    const { mode, sections } = options;
+    let importedStudentsCount = 0;
+    let importedTemplatesCount = 0;
+    let importedHistoryCount = 0;
+    let configUpdated = false;
+    let scheduleUpdated = false;
+
+    // 1. Students
+    if (sections.students && Array.isArray(data.students)) {
+      if (mode === 'overwrite') {
+        this.saveStudents(data.students);
+        importedStudentsCount = data.students.length;
+      } else {
+        // Merge mode: Match by ID or studentName
+        const currentStudents = this.getStudents();
+        const studentMap = new Map<string, Student>();
+        currentStudents.forEach((s) => {
+          studentMap.set(s.id, s);
+          studentMap.set(s.studentName.toLowerCase().trim(), s);
+        });
+
+        const mergedStudents = [...currentStudents];
+        data.students.forEach((incoming) => {
+          const byId = studentMap.get(incoming.id);
+          const byName = studentMap.get(incoming.studentName.toLowerCase().trim());
+          const existing = byId || byName;
+
+          if (existing) {
+            const idx = mergedStudents.findIndex((s) => s.id === existing.id);
+            if (idx >= 0) {
+              mergedStudents[idx] = { ...existing, ...incoming };
+            }
+          } else {
+            mergedStudents.push(incoming);
+            studentMap.set(incoming.id, incoming);
+            studentMap.set(incoming.studentName.toLowerCase().trim(), incoming);
+          }
+        });
+        this.saveStudents(mergedStudents);
+        importedStudentsCount = data.students.length;
+      }
+    }
+
+    // 2. Templates
+    if (sections.templates && Array.isArray(data.templates) && data.templates.length > 0) {
+      if (mode === 'overwrite') {
+        this.saveTemplates(data.templates);
+        if (data.activeTemplateId) {
+          this.setActiveTemplateId(data.activeTemplateId);
+        }
+        importedTemplatesCount = data.templates.length;
+      } else {
+        // Merge mode: Match templates by ID
+        const currentTemplates = this.getTemplates();
+        const templateMap = new Map<string, MessageTemplate>();
+        currentTemplates.forEach((t) => templateMap.set(t.id, t));
+
+        const mergedTemplates = [...currentTemplates];
+        data.templates.forEach((incoming) => {
+          const existing = templateMap.get(incoming.id);
+          if (existing) {
+            const idx = mergedTemplates.findIndex((t) => t.id === existing.id);
+            if (idx >= 0) {
+              mergedTemplates[idx] = { ...existing, ...incoming };
+            }
+          } else {
+            mergedTemplates.push(incoming);
+            templateMap.set(incoming.id, incoming);
+          }
+        });
+        this.saveTemplates(mergedTemplates);
+        if (data.activeTemplateId) {
+          this.setActiveTemplateId(data.activeTemplateId);
+        }
+        importedTemplatesCount = data.templates.length;
+      }
+    }
+
+    // 3. History
+    if (sections.history && Array.isArray(data.history) && data.history.length > 0) {
+      if (mode === 'overwrite') {
+        localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(data.history.slice(0, 100)));
+        importedHistoryCount = data.history.length;
+      } else {
+        // Merge mode: Combine history entries uniquely by ID and date
+        const currentHistory = this.getHistory();
+        const existingKeys = new Set(currentHistory.map((h) => `${h.id}_${h.date}`));
+        const newItems = data.history.filter((h) => !existingKeys.has(`${h.id}_${h.date}`));
+        const combined = [...newItems, ...currentHistory].slice(0, 100);
+        localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(combined));
+        importedHistoryCount = newItems.length;
+      }
+    }
+
+    // 4. Config
+    if (sections.config && data.config && typeof data.config === 'object') {
+      const currentConfig = this.getConfig();
+      // Security: Do NOT overwrite an existing working API key with empty string from backup
+      const safeIncomingConfig = { ...data.config };
+      if (!safeIncomingConfig.apiKey && currentConfig.apiKey) {
+        delete safeIncomingConfig.apiKey;
+      }
+      if (!safeIncomingConfig.metaToken && currentConfig.metaToken) {
+        delete safeIncomingConfig.metaToken;
+      }
+
+      this.saveConfig(safeIncomingConfig);
+      configUpdated = true;
+    }
+
+    // 5. Schedule
+    if (sections.schedule) {
+      this.saveSchedule(data.scheduledDispatch || null);
+      scheduleUpdated = true;
+    }
+
+    return {
+      success: true,
+      importedStudentsCount,
+      importedTemplatesCount,
+      importedHistoryCount,
+      configUpdated,
+      scheduleUpdated,
+      mode,
+    };
+  },
+
+  importFullBackup(jsonString: string): boolean {
+    const validation = this.validateBackupFile(jsonString);
+    if (!validation.isValid || !validation.data) {
       return false;
     }
+
+    const res = this.importFullBackupWithOptions(validation.data, {
+      mode: 'merge',
+      sections: {
+        students: true,
+        templates: true,
+        history: true,
+        config: true,
+        schedule: true,
+      },
+    });
+    return res.success;
   },
 
   getTemplates(): MessageTemplate[] {
@@ -227,18 +516,86 @@ export const storageService = {
     try {
       const data = localStorage.getItem(CONFIG_STORAGE_KEY);
       if (data) {
-        return { ...DEFAULT_CONFIG, ...JSON.parse(data) };
+        const parsed = JSON.parse(data);
+        const merged = { ...DEFAULT_CONFIG, ...parsed };
+
+        // If runtime decrypted secrets exist in memory, use them
+        if (runtimeSecrets.apiKey !== undefined) {
+          merged.apiKey = runtimeSecrets.apiKey;
+        } else if (merged.apiKey === 'enc:safeStorage') {
+          merged.apiKey = ''; // Clean placeholder until decrypted
+        }
+
+        if (runtimeSecrets.metaToken !== undefined) {
+          merged.metaToken = runtimeSecrets.metaToken;
+        } else if (merged.metaToken === 'enc:safeStorage') {
+          merged.metaToken = '';
+        }
+
+        return merged;
       }
     } catch {
       // Fallback
     }
-    return DEFAULT_CONFIG;
+
+    return {
+      ...DEFAULT_CONFIG,
+      apiKey: runtimeSecrets.apiKey !== undefined ? runtimeSecrets.apiKey : DEFAULT_CONFIG.apiKey,
+      metaToken: runtimeSecrets.metaToken !== undefined ? runtimeSecrets.metaToken : DEFAULT_CONFIG.metaToken,
+    };
+  },
+
+  async initSecureStorage(): Promise<void> {
+    try {
+      if (typeof window !== 'undefined' && window.electronAPI?.secureStorage) {
+        const isAvail = await window.electronAPI.secureStorage.isAvailable();
+        if (isAvail) {
+          const encKey = localStorage.getItem('karne_sec_key_enc');
+          if (encKey) {
+            runtimeSecrets.apiKey = await window.electronAPI.secureStorage.decrypt(encKey);
+          }
+          const encMeta = localStorage.getItem('karne_sec_meta_enc');
+          if (encMeta) {
+            runtimeSecrets.metaToken = await window.electronAPI.secureStorage.decrypt(encMeta);
+          }
+        }
+      }
+    } catch {
+      // Fallback
+    }
   },
 
   saveConfig(config: Partial<typeof DEFAULT_CONFIG>): void {
     const current = this.getConfig();
     const updated = { ...current, ...config };
-    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(updated));
+
+    // Update in-memory runtime secrets
+    if (config.apiKey !== undefined) {
+      runtimeSecrets.apiKey = config.apiKey;
+    }
+    if (config.metaToken !== undefined) {
+      runtimeSecrets.metaToken = config.metaToken;
+    }
+
+    // Hardware-level encryption for Electron / macOS Keychain
+    const sanitizedToStore = { ...updated };
+    if (typeof window !== 'undefined' && window.electronAPI?.secureStorage) {
+      // Encrypt sensitive secrets via Electron safeStorage and store ciphertext in separate keys
+      if (config.apiKey !== undefined) {
+        window.electronAPI.secureStorage.encrypt(config.apiKey).then((enc) => {
+          localStorage.setItem('karne_sec_key_enc', enc);
+        }).catch(() => {});
+        sanitizedToStore.apiKey = 'enc:safeStorage';
+      }
+      if (config.metaToken !== undefined) {
+        window.electronAPI.secureStorage.encrypt(config.metaToken).then((enc) => {
+          localStorage.setItem('karne_sec_meta_enc', enc);
+        }).catch(() => {});
+        sanitizedToStore.metaToken = 'enc:safeStorage';
+      }
+    }
+
+    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(sanitizedToStore));
   },
 
   getHistory(): HistoryItem[] {
@@ -284,17 +641,30 @@ export const storageService = {
     }
   },
 
-  getSchedule(): ScheduledDispatch | null {
+  getSchedule(allowExpired = false): ScheduledDispatch | null {
     try {
       const data = localStorage.getItem(SCHEDULE_STORAGE_KEY);
       if (data) {
         const parsed = JSON.parse(data) as ScheduledDispatch;
-        // If expired more than 30 mins ago, discard
-        if (parsed.targetTimestamp < Date.now() - 30 * 60 * 1000) {
-          localStorage.removeItem(SCHEDULE_STORAGE_KEY);
+        if (!allowExpired && parsed.targetTimestamp <= Date.now()) {
           return null;
         }
         return parsed;
+      }
+    } catch {
+      // Fallback
+    }
+    return null;
+  },
+
+  getOverdueSchedule(): ScheduledDispatch | null {
+    try {
+      const data = localStorage.getItem(SCHEDULE_STORAGE_KEY);
+      if (data) {
+        const parsed = JSON.parse(data) as ScheduledDispatch;
+        if (parsed.targetTimestamp <= Date.now()) {
+          return parsed;
+        }
       }
     } catch {
       // Fallback
@@ -312,6 +682,24 @@ export const storageService = {
     } catch {
       // Ignore
     }
+  },
+
+  dismissSchedule(schedule: ScheduledDispatch | null, logAsMissed = false): void {
+    if (schedule && logAsMissed) {
+      this.addHistoryItem({
+        id: `missed_${Date.now()}`,
+        studentName: `Toplu Gönderim (${schedule.studentCount} Veli)`,
+        parentName: 'Zamanlanmış Görev',
+        maskedPhone: '—',
+        pdfFileName: `${schedule.examName}.pdf`,
+        date: new Date().toISOString(),
+        status: 'cancelled',
+        outcome: 'failed',
+        errorMessage: `Uygulama kapalı olduğu için planlanan saatte (${schedule.targetTimeString}) gönderilemedi (Zaman aşımı / İptal).`,
+        examName: schedule.examName,
+      });
+    }
+    localStorage.removeItem(SCHEDULE_STORAGE_KEY);
   },
 
   getActiveQueueState(): PersistedQueueState | null {

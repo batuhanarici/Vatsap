@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Student, StudentFormData } from '../types/student';
 import { normalizePhoneNumber, isValidTurkishPhone, formatPhoneDisplay } from '../services/normalizer';
-import { X } from 'lucide-react';
+import { X, UserCheck, UserX, Phone, PhoneCall } from 'lucide-react';
 
 interface StudentModalProps {
   isOpen: boolean;
@@ -19,7 +19,10 @@ export const StudentModal: React.FC<StudentModalProps> = ({
   const [studentName, setStudentName] = useState('');
   const [parentName, setParentName] = useState('');
   const [phone, setPhone] = useState('');
+  const [secondaryPhone, setSecondaryPhone] = useState('');
   const [group, setGroup] = useState('');
+  const [notes, setNotes] = useState('');
+  const [isActive, setIsActive] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -27,12 +30,18 @@ export const StudentModal: React.FC<StudentModalProps> = ({
       setStudentName(studentToEdit.studentName);
       setParentName(studentToEdit.parentName);
       setPhone(studentToEdit.phone);
+      setSecondaryPhone(studentToEdit.secondaryPhone || '');
       setGroup(studentToEdit.group || '');
+      setNotes(studentToEdit.notes || '');
+      setIsActive(studentToEdit.isActive !== false);
     } else {
       setStudentName('');
       setParentName('');
       setPhone('');
+      setSecondaryPhone('');
       setGroup('');
+      setNotes('');
+      setIsActive(true);
     }
     setError(null);
   }, [studentToEdit, isOpen]);
@@ -47,6 +56,7 @@ export const StudentModal: React.FC<StudentModalProps> = ({
     const cleanParent = parentName.trim();
     const cleanPhone = normalizePhoneNumber(phone);
     const cleanGroup = group.trim() || 'Genel';
+    const cleanSecondary = secondaryPhone.trim() ? normalizePhoneNumber(secondaryPhone) : undefined;
 
     if (!cleanName) {
       setError('Lütfen öğrenci adını girin.');
@@ -57,7 +67,11 @@ export const StudentModal: React.FC<StudentModalProps> = ({
       return;
     }
     if (!isValidTurkishPhone(cleanPhone)) {
-      setError('Geçersiz telefon numarası. Lütfen Türkiye formatında (05XX... veya 905XX...) girin.');
+      setError('1. Veli telefonu geçersiz. Lütfen Türkiye formatında (05XX... veya 905XX...) girin.');
+      return;
+    }
+    if (cleanSecondary && !isValidTurkishPhone(cleanSecondary)) {
+      setError('2. Veli telefonu geçersiz. Lütfen doğru bir telefon formatı girin veya boş bırakın.');
       return;
     }
 
@@ -65,14 +79,17 @@ export const StudentModal: React.FC<StudentModalProps> = ({
       studentName: cleanName,
       parentName: cleanParent,
       phone: cleanPhone,
+      secondaryPhone: cleanSecondary,
       group: cleanGroup,
+      notes: notes.trim() || undefined,
+      isActive,
     });
     onClose();
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
-      <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-neutral-900 dark:text-neutral-100 transition-colors">
+      <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-neutral-900 dark:text-neutral-100 transition-colors">
         <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-800/50">
           <h2 className="text-sm font-semibold text-neutral-900 dark:text-white">
             {studentToEdit ? 'Öğrenciyi Düzenle' : 'Yeni Öğrenci Ekle'}
@@ -85,75 +102,95 @@ export const StudentModal: React.FC<StudentModalProps> = ({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+        <form onSubmit={handleSubmit} className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
           {error && (
             <div className="p-2.5 rounded bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300">
               {error}
             </div>
           )}
 
-          <div>
-            <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1">
-              Öğrenci Adı Soyadı
+          {/* Active / Inactive Status Toggle */}
+          <div className="flex items-center justify-between p-3 bg-neutral-50 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-800">
+            <div className="flex items-center gap-2">
+              {isActive ? (
+                <UserCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              ) : (
+                <UserX className="w-4 h-4 text-neutral-400" />
+              )}
+              <div>
+                <span className="text-xs font-semibold block text-neutral-900 dark:text-neutral-100">
+                  Öğrenci Durumu: {isActive ? 'Aktif' : 'Pasif'}
+                </span>
+                <span className="text-[10px] text-neutral-500 dark:text-neutral-400">
+                  {isActive
+                    ? 'Karne eşleştirme ve toplu gönderim listelerine dahil edilir.'
+                    : 'Pasif öğrenciler toplu gönderim listesinden çıkarılır, kaydı saklanır.'}
+                </span>
+              </div>
+            </div>
+
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isActive}
+                onChange={(e) => setIsActive(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-neutral-200 peer-focus:outline-none rounded-full peer dark:bg-neutral-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-neutral-600 peer-checked:bg-emerald-600"></div>
             </label>
-            <input
-              type="text"
-              required
-              value={studentName}
-              onChange={(e) => setStudentName(e.target.value)}
-              placeholder="Örn: Ahmet Yılmaz"
-              className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg text-xs text-neutral-900 dark:text-neutral-100 bg-white dark:bg-neutral-800 focus:outline-hidden focus:ring-1 focus:ring-neutral-900 dark:focus:ring-neutral-400"
-            />
           </div>
 
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                Öğrenci Adı Soyadı *
+              </label>
+              <input
+                type="text"
+                required
+                value={studentName}
+                onChange={(e) => setStudentName(e.target.value)}
+                placeholder="Örn: Ahmet Yılmaz"
+                className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg text-xs text-neutral-900 dark:text-neutral-100 bg-white dark:bg-neutral-800 focus:outline-hidden focus:ring-1 focus:ring-neutral-900 dark:focus:ring-neutral-400"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1">
                 Sınıf / Şube / Grup
               </label>
-              <span className="text-[10px] text-neutral-400 dark:text-neutral-500">
-                (İsteğe bağlı, örn: 8-A)
-              </span>
-            </div>
-            <input
-              type="text"
-              value={group}
-              onChange={(e) => setGroup(e.target.value)}
-              placeholder="Örn: 8-A veya 12-Sayısal"
-              className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg text-xs text-neutral-900 dark:text-neutral-100 bg-white dark:bg-neutral-800 focus:outline-hidden focus:ring-1 focus:ring-neutral-900 dark:focus:ring-neutral-400"
-            />
-            <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-              <span className="text-[10px] text-neutral-400 dark:text-neutral-500">Hızlı seçim:</span>
-              {['8-A', '8-B', '12-Sayısal', '12-EA', 'Hafta Sonu Grubu'].map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => setGroup(s)}
-                  className="px-2 py-0.5 rounded text-[10px] font-medium bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-700 cursor-pointer transition-colors"
-                >
-                  {s}
-                </button>
-              ))}
+              <input
+                type="text"
+                value={group}
+                onChange={(e) => setGroup(e.target.value)}
+                placeholder="Örn: 8-A veya 12-Sayısal"
+                className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg text-xs text-neutral-900 dark:text-neutral-100 bg-white dark:bg-neutral-800 focus:outline-hidden focus:ring-1 focus:ring-neutral-900 dark:focus:ring-neutral-400"
+              />
             </div>
           </div>
 
           <div>
             <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1">
-              Veli Adı Soyadı
+              Veli Adı Soyadı *
             </label>
             <input
               type="text"
               required
               value={parentName}
               onChange={(e) => setParentName(e.target.value)}
-              placeholder="Örn: Mehmet Yılmaz"
+              placeholder="Örn: Mehmet Yılmaz (veya Fatma Yılmaz)"
               className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg text-xs text-neutral-900 dark:text-neutral-100 bg-white dark:bg-neutral-800 focus:outline-hidden focus:ring-1 focus:ring-neutral-900 dark:focus:ring-neutral-400"
             />
           </div>
 
+          {/* Primary Phone */}
           <div>
-            <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1">
-              WhatsApp Telefon Numarası
+            <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <Phone className="w-3.5 h-3.5 text-emerald-600" />
+                <span>1. Veli WhatsApp Telefon Numarası *</span>
+              </span>
+              <span className="text-[10px] text-neutral-400">Ana İletişim</span>
             </label>
             <input
               type="text"
@@ -168,6 +205,42 @@ export const StudentModal: React.FC<StudentModalProps> = ({
                 Formatlanan: {formatPhoneDisplay(phone)}
               </p>
             )}
+          </div>
+
+          {/* Secondary Phone (Multi-parent contact) */}
+          <div>
+            <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <PhoneCall className="w-3.5 h-3.5 text-blue-600" />
+                <span>2. Veli Telefon Numarası (Opsiyonel)</span>
+              </span>
+              <span className="text-[10px] text-neutral-400">Anne / Baba 2. Hat</span>
+            </label>
+            <input
+              type="text"
+              value={secondaryPhone}
+              onChange={(e) => setSecondaryPhone(e.target.value)}
+              placeholder="Örn: 0533 222 33 44 (İsteğe bağlı)"
+              className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg text-xs font-mono text-neutral-900 dark:text-neutral-100 bg-white dark:bg-neutral-800 focus:outline-hidden focus:ring-1 focus:ring-neutral-900 dark:focus:ring-neutral-400"
+            />
+            {secondaryPhone && (
+              <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-1 font-mono">
+                Formatlanan: {formatPhoneDisplay(secondaryPhone)}
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+              Özel Notlar (Opsiyonel)
+            </label>
+            <textarea
+              rows={2}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Öğrenci veya veli ile ilgili özel notlar..."
+              className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg text-xs text-neutral-900 dark:text-neutral-100 bg-white dark:bg-neutral-800 focus:outline-hidden focus:ring-1 focus:ring-neutral-900 dark:focus:ring-neutral-400 resize-none"
+            />
           </div>
 
           <div className="pt-3 border-t border-neutral-100 dark:border-neutral-800 flex items-center justify-end gap-2">

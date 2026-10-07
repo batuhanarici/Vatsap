@@ -7,5 +7,6 @@ export interface ScheduledDispatch {
   selectedGroup: string;
   studentCount: number;
   createdAt: number;
+  sendToSecondaryParents?: boolean;
   note?: string;
 }

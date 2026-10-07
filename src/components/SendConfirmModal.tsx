@@ -20,12 +20,13 @@ import {
 interface SendConfirmModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (examName: string) => void;
+  onConfirm: (examName: string, sendToSecondaryParents?: boolean) => void;
   onSchedule?: (params: {
     targetTimestamp: number;
     targetTimeString: string;
     targetDateString: string;
     examName: string;
+    sendToSecondaryParents?: boolean;
   }) => void;
   matchedItems: MatchedItem[];
   whatsAppStatus: WhatsAppStatus;
@@ -53,6 +54,7 @@ export const SendConfirmModal: React.FC<SendConfirmModalProps> = ({
 }) => {
   const [examName, setExamName] = useState(initialExamName);
   const [sendMode, setSendMode] = useState<'now' | 'schedule'>('now');
+  const [sendToSecondary, setSendToSecondary] = useState(false);
 
   // Schedule date & time state
   const getTodayDateString = () => {
@@ -129,7 +131,7 @@ export const SendConfirmModal: React.FC<SendConfirmModalProps> = ({
   const handleStartOrSchedule = () => {
     if (sendMode === 'now') {
       onClose();
-      onConfirm(examName);
+      onConfirm(examName, sendToSecondary);
     } else {
       if (isPastTime) {
         alert('Lütfen gelecekteki bir tarih ve saat seçin.');
@@ -141,6 +143,7 @@ export const SendConfirmModal: React.FC<SendConfirmModalProps> = ({
           targetTimeString: scheduledTime,
           targetDateString: scheduledDate,
           examName,
+          sendToSecondaryParents: sendToSecondary,
         });
       }
       onClose();
@@ -338,6 +341,27 @@ export const SendConfirmModal: React.FC<SendConfirmModalProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Multi-Parent Delivery Option */}
+          {readyItems.some((i) => Boolean(i.student.secondaryPhone)) && (
+            <label className="flex items-start gap-2.5 p-3 bg-purple-50/80 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800 rounded-lg cursor-pointer text-xs transition-colors">
+              <input
+                type="checkbox"
+                checked={sendToSecondary}
+                onChange={(e) => setSendToSecondary(e.target.checked)}
+                className="mt-0.5 rounded text-purple-600 focus:ring-purple-500 cursor-pointer"
+              />
+              <div className="flex flex-col">
+                <span className="font-semibold text-purple-900 dark:text-purple-200">
+                  2. Veli Numarasına da Gönder (Kopya İletimi)
+                </span>
+                <span className="text-[11px] text-purple-800/80 dark:text-purple-300/80 mt-0.5 leading-relaxed">
+                  İkinci veli telefonu tanımlı olan{' '}
+                  <strong>{readyItems.filter((i) => Boolean(i.student.secondaryPhone)).length} öğrenci</strong> için karne kopyası 2. veliye de otomatik iletilecektir.
+                </span>
+              </div>
+            </label>
+          )}
 
           {/* Statistics summary */}
           <div className="p-3.5 bg-neutral-50 dark:bg-neutral-800/50 border border-neutral-200 dark:border-neutral-800 rounded-lg space-y-2 text-xs">

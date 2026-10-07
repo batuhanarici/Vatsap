@@ -17,6 +17,9 @@ import {
   Link,
   ShieldCheck,
   SlidersHorizontal,
+  Eye,
+  FileQuestion,
+  FileText,
 } from 'lucide-react';
 
 interface MatchingTableProps {
@@ -33,6 +36,11 @@ interface MatchingTableProps {
   isOcrScanning?: boolean;
   ocrProgress?: { current: number; total: number; currentFileName: string; detectedStudentName?: string } | null;
   onStartOcrScan?: () => void;
+  isVisualOcrRunning?: boolean;
+  visualOcrProgress?: { current: number; total: number; currentFileName: string; detectedStudentName?: string } | null;
+  onStartVisualOcr?: () => void;
+  onOpenOcrFailureModal?: () => void;
+  failedOcrCount?: number;
   unassignedPdfCount?: number;
   selectedGroup?: string;
   onSelectGroup?: (group: string) => void;
@@ -54,6 +62,11 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
   isOcrScanning = false,
   ocrProgress = null,
   onStartOcrScan,
+  isVisualOcrRunning = false,
+  visualOcrProgress = null,
+  onStartVisualOcr,
+  onOpenOcrFailureModal,
+  failedOcrCount = 0,
   unassignedPdfCount = 0,
   selectedGroup = 'all',
   onSelectGroup,
@@ -244,9 +257,24 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
 
     if (item.matchMethod === 'content_ocr') {
       return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
-          <Sparkles className="w-3 h-3 text-indigo-500" />
-          <span>PDF İçi Metin (%{item.confidenceScore || 80})</span>
+        <span
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800"
+          title={item.matchReason || 'Taranmış belge Görsel OCR (Optik Tanıma) ile eşleştirildi'}
+        >
+          <Eye className="w-3 h-3 text-purple-500" />
+          <span>Görsel OCR (%{item.confidenceScore || 85})</span>
+        </span>
+      );
+    }
+
+    if (item.matchMethod === 'text_extraction') {
+      return (
+        <span
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800"
+          title={item.matchReason || 'PDF içi dijital metin katmanı okunarak eşleştirildi'}
+        >
+          <FileText className="w-3 h-3 text-indigo-500" />
+          <span>Metin Katmanı (%{item.confidenceScore || 80})</span>
         </span>
       );
     }
@@ -417,56 +445,95 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
         </div>
       </div>
 
-      {/* PDF Text Layer Scanning Bar (Digital text extraction, distinct from raster OCR) */}
-      {missingCount > 0 && hasFolderSelected && onStartOcrScan && (
-        <div className="px-4 py-3 bg-indigo-50/90 dark:bg-indigo-950/40 border-b border-indigo-100 dark:border-indigo-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+      {/* Scanning Bar: Clearly distinguishes Digital Text Layer Extraction vs. Scanned Image OCR */}
+      {missingCount > 0 && hasFolderSelected && (onStartOcrScan || onStartVisualOcr) && (
+        <div className="px-4 py-3 bg-indigo-50/90 dark:bg-indigo-950/40 border-b border-indigo-100 dark:border-indigo-800 flex flex-col lg:flex-row lg:items-center justify-between gap-3 text-xs">
           <div className="flex items-start gap-2.5">
             <div className="p-1.5 bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 rounded-md border border-indigo-200 dark:border-indigo-800 shrink-0 mt-0.5">
               <ScanText className="w-4 h-4" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="font-semibold text-indigo-950 dark:text-indigo-200">
-                  PDF İçi Metin Taraması ({missingCount} eksik öğrenci)
+                  Otomatik İçerik &amp; OCR Taraması ({missingCount} eksik öğrenci)
                 </span>
                 {unassignedPdfCount > 0 && (
                   <span className="text-[10px] bg-indigo-200/70 dark:bg-indigo-900 text-indigo-800 dark:text-indigo-200 font-mono px-1.5 py-0.2 rounded font-semibold">
                     {unassignedPdfCount} boşta PDF
                   </span>
                 )}
+                {failedOcrCount > 0 && onOpenOcrFailureModal && (
+                  <button
+                    type="button"
+                    onClick={onOpenOcrFailureModal}
+                    className="inline-flex items-center gap-1 text-[10px] bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 font-semibold px-2 py-0.5 rounded cursor-pointer hover:bg-amber-200"
+                  >
+                    <FileQuestion className="w-3 h-3 text-amber-600" />
+                    <span>{failedOcrCount} Belgede OCR Başarısız (Raporu Gör)</span>
+                  </button>
+                )}
               </div>
-              <p className="text-[11px] text-indigo-800/80 dark:text-indigo-300/80 mt-0.5">
-                Belgelerin dijital metin katmanını tarayarak öğrenci adlarını otomatik eşleştirir.
-                <span className="text-neutral-500 dark:text-neutral-400 block mt-0.5 text-[10px]">
-                  * Not: Taranmış/fotoğraf formatındaki (görsel tabanlı) PDF&apos;ler metin katmanı içermez; bu belgeler için lütfen orijinal PDF kullanın veya sağdaki &quot;Ata / Değiştir&quot; butonunu kullanın.
-                </span>
+              <p className="text-[11px] text-indigo-800/80 dark:text-indigo-300/80 mt-0.5 leading-relaxed">
+                İki farklı yöntem desteklenir: <strong>PDF Metin Katmanı</strong> (dijital metin içeren belgeler için hızlı tarama) veya <strong>Görsel OCR</strong> (taranmış fotokopi ve fotoğraflar için yapay zeka optik tanıma).
               </p>
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onStartOcrScan}
-            disabled={isOcrScanning || unassignedPdfCount === 0}
-            className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-semibold text-xs transition-all shadow-xs cursor-pointer flex items-center justify-center gap-2 shrink-0 disabled:opacity-50"
-            title="PDF dosyalarının içerisindeki dijital metin katmanını okur"
-          >
-            {isOcrScanning ? (
-              <>
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>
-                  {ocrProgress
-                    ? `Metin Taranıyor (${ocrProgress.current}/${ocrProgress.total})...`
-                    : 'Metin Taranıyor...'}
-                </span>
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                <span>PDF Metin Katmanını Tara &amp; Eşleştir</span>
-              </>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {/* 1. Digital Text Layer Scan */}
+            {onStartOcrScan && (
+              <button
+                type="button"
+                onClick={onStartOcrScan}
+                disabled={isOcrScanning || isVisualOcrRunning || unassignedPdfCount === 0}
+                className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-semibold text-xs transition-all shadow-xs cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+                title="Dijital metin katmanı içeren standart PDF'leri anında çevrimdışı tarar"
+              >
+                {isOcrScanning ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>
+                      {ocrProgress
+                        ? `Metin Taranıyor (${ocrProgress.current}/${ocrProgress.total})...`
+                        : 'Metin Taranıyor...'}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <FileText className="w-3.5 h-3.5 text-indigo-200" />
+                    <span>PDF Metin Katmanını Tara</span>
+                  </>
+                )}
+              </button>
             )}
-          </button>
+
+            {/* 2. Scanned Image Real OCR */}
+            {onStartVisualOcr && (
+              <button
+                type="button"
+                onClick={onStartVisualOcr}
+                disabled={isOcrScanning || isVisualOcrRunning || unassignedPdfCount === 0}
+                className="px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-semibold text-xs transition-all shadow-xs cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+                title="Taranmış veya resim formatındaki PDF'leri yapay zeka Optik Karakter Tanıma (OCR) ile okur"
+              >
+                {isVisualOcrRunning ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>
+                      {visualOcrProgress
+                        ? `Görsel OCR (${visualOcrProgress.current}/${visualOcrProgress.total})...`
+                        : 'OCR Analiz Ediliyor...'}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                    <span>Taranmış Belge Görsel OCR</span>
+                  </>
+                )}
+              </button>
+            )}
+          </div>
         </div>
       )}
 

@@ -27,15 +27,32 @@ import { HistoryItem } from './types/history';
 import { MessageTemplate } from './types/template';
 import { ScheduledDispatch } from './types/schedule';
 
-import { storageService, INITIAL_STUDENTS, SAMPLE_TEST_STUDENTS, DEFAULT_TEMPLATE, PersistedQueueState } from './services/storageService';
+import {
+  storageService,
+  INITIAL_STUDENTS,
+  SAMPLE_TEST_STUDENTS,
+  DEFAULT_TEMPLATE,
+  PersistedQueueState,
+  FullBackupData,
+  BackupValidationResult,
+  ImportBackupOptions,
+} from './services/storageService';
 import { matchStudentsWithPdfs } from './services/pdfMatcher';
-import { performDeepPdfContentMatching, OcrScanProgress } from './services/pdfTextExtractor';
+import {
+  performDeepPdfContentMatching,
+  performScannedPdfOcrMatching,
+  OcrScanProgress,
+  OcrFailureItem,
+} from './services/pdfTextExtractor';
 import { OpenWAProvider } from './services/whatsapp/OpenWAProvider';
 import { MockWhatsAppProvider } from './services/whatsapp/MockProvider';
 import { WhatsAppWebProvider } from './services/whatsapp/WhatsAppWebProvider';
 import { MetaCloudProvider } from './services/whatsapp/MetaCloudProvider';
 import { WhatsAppProvider } from './services/whatsapp/types';
 import { executeSenderQueue, QueueProgressEvent } from './services/senderQueue';
+import { ManualMatchModal } from './components/ManualMatchModal';
+import { OcrFailureModal } from './components/OcrFailureModal';
+import { BackupPreviewModal } from './components/BackupPreviewModal';
 
 export default function App() {
   // Navigation
@@ -237,13 +254,100 @@ export default function App() {
   };
 
   useEffect(() => {
-    checkStatus();
+    storageService.initSecureStorage().then(() => {
+      checkStatus();
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMockMode, config.providerType, config.baseUrl, config.sessionId, config.apiKey, config.metaToken, config.metaPhoneNumberId]);
 
   // 3. Folder & Sample PDF Handlers
   const [isOcrScanning, setIsOcrScanning] = useState<boolean>(false);
   const [ocrProgress, setOcrProgress] = useState<OcrScanProgress | null>(null);
+
+  const [isVisualOcrRunning, setIsVisualOcrRunning] = useState<boolean>(false);
+  const [visualOcrProgress, setVisualOcrProgress] = useState<OcrScanProgress | null>(null);
+
+  const [failedOcrItems, setFailedOcrItems] = useState<OcrFailureItem[]>([]);
+  const [scannedImagePdfs, setScannedImagePdfs] = useState<string[]>([]);
+  const [isOcrFailureModalOpen, setIsOcrFailureModalOpen] = useState<boolean>(false);
+  const [ocrFailureScanType, setOcrFailureScanType] = useState<'digital_text' | 'visual_ocr'>('digital_text');
+
+  // Manual Matching Modal State
+  const [manualMatchItem, setManualMatchItem] = useState<MatchedItem | null>(null);
+  const [isManualMatchOpen, setIsManualMatchOpen] = useState<boolean>(false);
+
+  // Backup Import & Preview States
+  const [isBackupPreviewOpen, setIsBackupPreviewOpen] = useState<boolean>(false);
+  const [backupFileName, setBackupFileName] = useState<string>('');
+  const [backupValidationResult, setBackupValidationResult] = useState<BackupValidationResult | null>(null);
+
+  const handleInitiateImportBackup = (fileName: string, jsonString: string) => {
+    const validation = storageService.validateBackupFile(jsonString);
+    setBackupFileName(fileName);
+    setBackupValidationResult(validation);
+    setIsBackupPreviewOpen(true);
+  };
+
+  const handleConfirmImportBackup = (data: FullBackupData, options: ImportBackupOptions) => {
+    const summary = storageService.importFullBackupWithOptions(data, options);
+    if (!summary.success) {
+      addToast({
+        type: 'error',
+        title: 'İçe Aktarma Hatası',
+        message: 'Yedek dosyası içe aktarılırken bir sorun oluştu.',
+      });
+      return;
+    }
+
+    // Refresh active in-memory React states from storageService
+    if (options.sections.students) {
+      setStudents(storageService.getStudents());
+      setItemOverrides({});
+    }
+    if (options.sections.templates) {
+      setTemplates(storageService.getTemplates());
+      setActiveTemplateId(storageService.getActiveTemplateId());
+    }
+    if (options.sections.history) {
+      setHistory(storageService.getHistory());
+    }
+    if (options.sections.config) {
+      const newConfig = storageService.getConfig();
+      setConfig(newConfig);
+      openWaProvider.updateConfig(newConfig);
+    }
+    if (options.sections.schedule) {
+      setScheduledDispatch(storageService.getSchedule());
+    }
+
+    const modeText = options.mode === 'overwrite' ? 'üzerine yazılarak' : 'mevcut verilere birleştirilerek';
+    addToast({
+      type: 'success',
+      title: 'Yedek Başarıyla İçe Aktarıldı',
+      message: `${summary.importedStudentsCount} öğrenci ve ${summary.importedTemplatesCount} şablon ${modeText} başarıyla yüklendi!`,
+    });
+  };
+
+  const handleExportBackup = (includeSecrets = false) => {
+    const jsonString = storageService.exportFullBackup(includeSecrets);
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `Karne_Gonderici_Yedek_${new Date().toISOString().slice(0, 10)}.json`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    addToast({
+      type: 'success',
+      title: 'Yedek İndirildi',
+      message: includeSecrets
+        ? 'Tüm sistem verileri (API anahtarları dahil) indirildi.'
+        : 'Sistem verileri güvenli olarak indirildi (API anahtarları hariç tutuldu).',
+    });
+  };
 
   const assignedPdfNames = useMemo(
     () => new Set(matchedItems.filter((i) => i.pdfFile !== null).map((i) => i.pdfFile!.name)),
@@ -254,6 +358,7 @@ export default function App() {
     [pdfFiles, assignedPdfNames]
   );
 
+  // 1. Digital Text Layer Scanning (Fast, offline, reads selectable PDF vector text)
   const handleStartOcrScan = async () => {
     setIsOcrScanning(true);
     setOcrProgress({ current: 0, total: pdfFiles.length, currentFileName: 'Başlatılıyor...' });
@@ -275,6 +380,8 @@ export default function App() {
       });
 
       setItemOverrides((prev) => ({ ...prev, ...newOverrides }));
+      setScannedImagePdfs(result.scannedImagePdfs);
+      setFailedOcrItems(result.failedOcrItems);
 
       if (result.matchedCount > 0) {
         addToast({
@@ -286,15 +393,16 @@ export default function App() {
         addToast({
           type: 'info',
           title: 'Metin Eşleşmesi Bulunamadı',
-          message: 'Boştaki PDF dosyalarının metin katmanında eşleşmeyen öğrencilere ait isim tespit edilemedi.',
+          message: 'Boştaki PDF dosyalarının dijital metin katmanında eşleşmeyen öğrencilere ait isim tespit edilemedi.',
         });
       }
 
       if (result.scannedImagePdfs && result.scannedImagePdfs.length > 0) {
+        setOcrFailureScanType('digital_text');
         addToast({
           type: 'warning',
           title: 'Taranmış Görsel Belge Uyarısı',
-          message: `${result.scannedImagePdfs.length} adet PDF (${result.scannedImagePdfs.slice(0, 3).join(', ')}${result.scannedImagePdfs.length > 3 ? '...' : ''}) taranmış görsel/resim olduğu için seçilebilir dijital metin katmanı içermiyor. Görsel OCR yerine bu dosyaları "Ata / Değiştir" butonuyla manuel eşleştirebilirsiniz.`,
+          message: `${result.scannedImagePdfs.length} adet PDF (${result.scannedImagePdfs.slice(0, 3).join(', ')}${result.scannedImagePdfs.length > 3 ? '...' : ''}) taranmış görsel formatında olduğundan dijital metin içermiyor. "Taranmış Belge Görsel OCR" butonunu çalıştırabilir veya hata raporunu açabilirsiniz.`,
         });
       }
     } catch (err) {
@@ -302,12 +410,141 @@ export default function App() {
       addToast({
         type: 'error',
         title: 'Tarama Hatası',
-        message: 'PDF içerik taraması sırasında hata oluştu: ' + (err instanceof Error ? err.message : String(err)),
+        message: 'PDF metin taraması sırasında hata oluştu: ' + (err instanceof Error ? err.message : String(err)),
       });
     } finally {
       setIsOcrScanning(false);
       setOcrProgress(null);
     }
+  };
+
+  // 2. Real Scanned Document Visual OCR (Multimodal image optical character recognition)
+  const handleStartVisualOcr = async () => {
+    setIsVisualOcrRunning(true);
+    setVisualOcrProgress({ current: 0, total: pdfFiles.length, currentFileName: 'Görsel OCR Başlatılıyor...' });
+
+    try {
+      const result = await performScannedPdfOcrMatching(
+        matchedItems,
+        pdfFiles,
+        undefined,
+        (progress) => {
+          setVisualOcrProgress(progress);
+        }
+      );
+
+      const newOverrides: Record<string, Partial<MatchedItem>> = {};
+      result.updatedMatches.forEach((updated) => {
+        if (updated.matchMethod === 'content_ocr') {
+          newOverrides[updated.id] = updated;
+        }
+      });
+
+      setItemOverrides((prev) => ({ ...prev, ...newOverrides }));
+      setFailedOcrItems(result.failedOcrItems);
+      setScannedImagePdfs(result.scannedImagePdfs);
+
+      if (result.matchedCount > 0) {
+        addToast({
+          type: 'success',
+          title: 'Görsel OCR Başarılı',
+          message: `${result.matchedCount} adet taranmış belge Optik Karakter Tanıma (OCR) ile başarıyla eşleştirildi!`,
+        });
+      } else {
+        addToast({
+          type: 'warning',
+          title: 'Görsel OCR Eşleşmesi Sağlanamadı',
+          message: 'Taranmış belgeler analiz edildi ancak belgedeki yazılar eksik öğrenci listesiyle eşleşmedi.',
+        });
+      }
+
+      if (result.failedOcrItems && result.failedOcrItems.length > 0) {
+        setOcrFailureScanType('visual_ocr');
+        setIsOcrFailureModalOpen(true);
+      }
+    } catch (err) {
+      console.error('Visual OCR error:', err);
+      addToast({
+        type: 'error',
+        title: 'Görsel OCR Hatası',
+        message: 'Görsel OCR sırasında hata oluştu: ' + (err instanceof Error ? err.message : String(err)),
+      });
+    } finally {
+      setIsVisualOcrRunning(false);
+      setVisualOcrProgress(null);
+    }
+  };
+
+  const handleOpenManualMatch = (item: MatchedItem) => {
+    setManualMatchItem(item);
+    setIsManualMatchOpen(true);
+  };
+
+  const handleAssignPdf = (studentId: string, pdfFile: LocalPdfFile | null) => {
+    if (!pdfFile) {
+      setItemOverrides((prev) => ({
+        ...prev,
+        [studentId]: {
+          pdfFile: null,
+          status: 'missing_pdf',
+          confidenceScore: 0,
+          matchMethod: 'manual',
+          isManuallyAssigned: false,
+          needsConfirmation: false,
+          matchReason: 'PDF ataması kaldırıldı',
+        },
+      }));
+      return;
+    }
+
+    const currentItem = matchedItems.find((i) => i.student.id === studentId);
+    const hasValidPhone = Boolean(currentItem?.student.phone && currentItem.student.phone.length >= 10);
+
+    const namedPdf: LocalPdfFile = {
+      ...pdfFile,
+      originalName: pdfFile.originalName || pdfFile.name,
+      name: currentItem ? `${currentItem.student.studentName}.pdf` : pdfFile.name,
+    };
+
+    setItemOverrides((prev) => ({
+      ...prev,
+      [studentId]: {
+        pdfFile: namedPdf,
+        status: hasValidPhone ? 'ready' : 'invalid_phone',
+        confidenceScore: 100,
+        matchMethod: 'manual',
+        isManuallyAssigned: true,
+        needsConfirmation: false,
+        matchReason: `Kullanıcı tarafından manuel olarak atandı (${pdfFile.originalName || pdfFile.name})`,
+      },
+    }));
+
+    addToast({
+      type: 'success',
+      title: 'PDF Atandı',
+      message: `${currentItem?.student.studentName || 'Öğrenci'} için "${pdfFile.name}" dosyası başarıyla atandı.`,
+    });
+  };
+
+  const handleConfirmMatch = (studentId: string) => {
+    const item = matchedItems.find((i) => i.student.id === studentId);
+    if (!item) return;
+
+    setItemOverrides((prev) => ({
+      ...prev,
+      [studentId]: {
+        ...item,
+        status: item.student.phone && item.student.phone.length >= 10 ? 'ready' : 'invalid_phone',
+        needsConfirmation: false,
+        matchReason: (item.matchReason || '') + ' (Kullanıcı tarafından onaylandı)',
+      },
+    }));
+
+    addToast({
+      type: 'success',
+      title: 'Eşleşme Onaylandı',
+      message: `${item.student.studentName} için PDF eşleşmesi onaylandı.`,
+    });
   };
 
   const handleFolderSelected = (path: string, files: LocalPdfFile[]) => {
@@ -351,10 +588,14 @@ export default function App() {
         size: 305000,
         extractedText: 'ÖĞRENCİ GELİŞİM RAPORU ELİF ŞAHİN KEMAL ŞAHİN ORTALAMA: 94.20',
       },
+      {
+        name: 'taranmis_karne_004.pdf',
+        size: 450000,
+        // Intentionally no digital text layer to simulate a scanned image PDF
+      },
       { name: 'burak-aydin.pdf', size: 220000 },
       { name: 'İrem Güneş.pdf', size: 290000 },
       { name: 'Emre_Koc.pdf', size: 240000 },
-      // "Defne Yıldız" intentionally omitted to simulate 1 missing PDF
     ];
 
     setFolderPath('/Users/batuhan/Desktop/Karneler/2026-10-02');
@@ -371,7 +612,7 @@ export default function App() {
     setIsConfirmOpen(true);
   };
 
-  const handleConfirmSend = async (customExamName?: string) => {
+  const handleConfirmSend = async (customExamName?: string, sendToSecondaryParents?: boolean) => {
     setIsSending(true);
     setIsCompleted(false);
     setIsPaused(false);
@@ -393,6 +634,7 @@ export default function App() {
       delayMs: (config.delaySeconds || 3) * 1000,
       maxRetries: config.maxRetries ?? 2,
       retryDelayMs: (config.retryDelaySeconds ?? 2) * 1000,
+      sendToSecondaryParents: Boolean(sendToSecondaryParents),
       context: {
         examName,
         schoolName: config.schoolName,
@@ -567,6 +809,7 @@ export default function App() {
     targetTimeString: string;
     targetDateString: string;
     examName: string;
+    sendToSecondaryParents?: boolean;
   }) => {
     const targetItems =
       selectedGroup === 'all'
@@ -582,6 +825,7 @@ export default function App() {
       examName: params.examName,
       selectedGroup,
       studentCount: readyCount,
+      sendToSecondaryParents: params.sendToSecondaryParents,
       createdAt: Date.now(),
     };
 
@@ -597,9 +841,10 @@ export default function App() {
   const handleExecuteScheduleNow = () => {
     if (!scheduledDispatch) return;
     const examName = scheduledDispatch.examName;
+    const sendSec = scheduledDispatch.sendToSecondaryParents;
     setScheduledDispatch(null);
     storageService.saveSchedule(null);
-    handleConfirmSend(examName);
+    handleConfirmSend(examName, sendSec);
   };
 
   // Monitor scheduled dispatch timer
@@ -908,9 +1153,16 @@ export default function App() {
               isOcrScanning={isOcrScanning}
               ocrProgress={ocrProgress}
               onStartOcrScan={handleStartOcrScan}
+              isVisualOcrRunning={isVisualOcrRunning}
+              visualOcrProgress={visualOcrProgress}
+              onStartVisualOcr={handleStartVisualOcr}
+              onOpenOcrFailureModal={() => setIsOcrFailureModalOpen(true)}
+              failedOcrCount={failedOcrItems.length}
               unassignedPdfCount={unassignedPdfCount}
               selectedGroup={selectedGroup}
               onSelectGroup={setSelectedGroup}
+              onConfirmMatch={handleConfirmMatch}
+              onOpenManualMatch={handleOpenManualMatch}
             />
           </div>
         )}
@@ -924,6 +1176,7 @@ export default function App() {
             onResetToDefaults={handleResetStudents}
             onBulkAddStudents={handleBulkAddStudents}
             onClearAllStudents={handleClearAllStudents}
+            onInitiateImportBackup={handleInitiateImportBackup}
           />
         )}
 
@@ -955,6 +1208,8 @@ export default function App() {
         onCheckStatus={() => checkStatus(true)}
         isChecking={isCheckingStatus}
         qrCodeUrl={qrCodeUrl}
+        onInitiateImportBackup={handleInitiateImportBackup}
+        onExportBackup={handleExportBackup}
         onStartSession={async (sessionParams) => {
           addToast({
             id: 'session_start',
@@ -1080,6 +1335,42 @@ export default function App() {
         currentItem={previewItem}
         allItems={matchedItems}
         onSelectIndex={(index) => setPreviewItem(matchedItems[index])}
+      />
+
+      {/* Manual PDF Match Modal */}
+      <ManualMatchModal
+        isOpen={isManualMatchOpen}
+        onClose={() => setIsManualMatchOpen(false)}
+        targetItem={manualMatchItem}
+        allItems={matchedItems}
+        allPdfFiles={pdfFiles}
+        onAssignPdf={handleAssignPdf}
+      />
+
+      {/* Scanned Document OCR Failure Report Modal */}
+      <OcrFailureModal
+        isOpen={isOcrFailureModalOpen}
+        onClose={() => setIsOcrFailureModalOpen(false)}
+        failureItems={failedOcrItems}
+        scannedPdfs={scannedImagePdfs}
+        scanType={ocrFailureScanType}
+        onStartVisualOcr={handleStartVisualOcr}
+        onOpenManualMatch={() => {
+          const firstMissing = matchedItems.find((i) => i.status === 'missing_pdf') || matchedItems[0];
+          if (firstMissing) {
+            handleOpenManualMatch(firstMissing);
+          }
+        }}
+        isOcrRunning={isVisualOcrRunning}
+      />
+
+      {/* System Full Backup Preview & Import Modal */}
+      <BackupPreviewModal
+        isOpen={isBackupPreviewOpen}
+        onClose={() => setIsBackupPreviewOpen(false)}
+        fileName={backupFileName}
+        validationResult={backupValidationResult}
+        onConfirmImport={handleConfirmImportBackup}
       />
 
       {/* Floating App-wide Toast Notifications */}
