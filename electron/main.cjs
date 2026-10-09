@@ -6,6 +6,7 @@ const net = require('net');
 const { exec, spawn } = require('child_process');
 const { promisify } = require('util');
 const CredentialService = require('./CredentialService.cjs');
+const { DispatchRepository } = require('./DispatchRepository.cjs');
 const {
   registerAllowedDirectory,
   validatePdfPath,
@@ -16,6 +17,7 @@ const {
 const execAsync = promisify(exec);
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 const credentialService = new CredentialService();
+const dispatchRepository = new DispatchRepository();
 
 let expressProcess = null;
 let activeServerPort = 3000;
@@ -706,6 +708,15 @@ app.whenReady().then(async () => {
     console.error('[Electron] CredentialService başlatılamadı:', err);
   }
 
+  try {
+    dispatchRepository.setStorageDir(app.getPath('userData'));
+    await dispatchRepository.init();
+    console.log('[Electron] DispatchRepository (SQLite) başarıyla başlatıldı.');
+  } catch (err) {
+    console.error('[Electron] DispatchRepository başlatılamadı:', err);
+    throw err;
+  }
+
   await startLocalServerIfNeeded();
   createWindow();
 
@@ -717,6 +728,9 @@ app.whenReady().then(async () => {
 });
 
 app.on('before-quit', () => {
+  if (dispatchRepository) {
+    dispatchRepository.close();
+  }
   if (expressProcess) {
     console.log('[Electron] Yerel sunucu kapatılıyor...');
     try {
@@ -731,3 +745,8 @@ app.on('window-all-closed', () => {
     app.quit();
   }
 });
+
+module.exports = {
+  dispatchRepository,
+  credentialService,
+};
