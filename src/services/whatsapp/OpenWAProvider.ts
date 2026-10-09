@@ -97,12 +97,8 @@ export class OpenWAProvider implements WhatsAppProvider {
       Accept: 'application/json',
     };
 
-    if (this.config.apiKey && this.config.apiKey.trim()) {
-      const trimmedKey = this.config.apiKey.trim();
-      headers['X-API-Key'] = trimmedKey;
-      headers['api-key'] = trimmedKey;
-    }
-
+    // V2 Electron Security Policy: In Electron Desktop environment, credentials are
+    // isolated in Main Process CredentialService. Renderer never sends X-API-Key or api-key headers.
     return headers;
   }
 
@@ -125,10 +121,20 @@ export class OpenWAProvider implements WhatsAppProvider {
     // 1. Electron Desktop IPC Execution (Zero CORS, native macOS network access directly to Docker)
     if (typeof window !== 'undefined' && window.electronAPI?.requestOpenWA) {
       try {
+        // In Electron desktop mode, secrets are isolated in Main Process; Renderer does not pass authentication headers
+        const sanitizedHeadersForIpc: Record<string, string> = {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          ...((options.headers as Record<string, string>) || {}),
+        };
+        delete sanitizedHeadersForIpc['X-API-Key'];
+        delete sanitizedHeadersForIpc['api-key'];
+        delete sanitizedHeadersForIpc['Authorization'];
+
         const ipcResult = await window.electronAPI.requestOpenWA<T>({
           url,
           method: options.method || 'GET',
-          headers,
+          headers: sanitizedHeadersForIpc,
           body: options.body as string | undefined,
           timeoutMs,
         });
@@ -249,8 +255,7 @@ export class OpenWAProvider implements WhatsAppProvider {
     const detail = (dataObj?.message || dataObj?.error || dataObj?.details || fallbackText || '') as string;
 
     if (status === 401) {
-      const keyHint = this.config.apiKey ? ` (Mevcut: ${maskApiKey(this.config.apiKey)})` : ' (API Key girilmemiş)';
-      return `API Anahtarı geçersiz veya yetkisiz (401 Unauthorized). Lütfen Ayarlar bölümünden OpenWA API Key'i kontrol edin${keyHint}.`;
+      return 'API Anahtarı geçersiz veya yetkisiz (401 Unauthorized). Lütfen Ayarlar bölümünden OpenWA API Key\'i kontrol edin.';
     }
 
     if (status === 403) {

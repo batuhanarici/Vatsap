@@ -133,9 +133,11 @@ export function matchStudentsWithPdfs(
 
     if (assignment) {
       const pdf = assignment.pdf;
-      const isLowConfidence = assignment.score < 70;
       const claimants = pdfClaimants.get(pdfFiles.indexOf(pdf)) || [];
       const hasConflict = claimants.length > 1;
+      // V2 Match Policy: Score >= 95 and no ambiguity -> ready for auto dispatch
+      // Score < 95 or multiple candidates -> pending_confirmation
+      const isAutoEligible = assignment.score >= 95 && !hasConflict;
 
       const studentNamedPdf: LocalPdfFile = {
         ...pdf,
@@ -147,13 +149,13 @@ export function matchStudentsWithPdfs(
         id: student.id,
         student,
         pdfFile: studentNamedPdf,
-        status: isLowConfidence ? ('pending_confirmation' as MatchingStatus) : ('ready' as MatchingStatus),
+        status: isAutoEligible ? ('ready' as MatchingStatus) : ('pending_confirmation' as MatchingStatus),
         sendingStatus: 'idle',
         matchMethod: 'filename',
         confidenceScore: assignment.score,
         matchReason: assignment.reason,
         hasConflict,
-        needsConfirmation: isLowConfidence,
+        needsConfirmation: !isAutoEligible,
       };
     }
 

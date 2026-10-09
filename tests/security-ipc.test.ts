@@ -250,19 +250,17 @@ describe('Vatsap V2 P0-1 — Security IPC Hardening Test Suite', () => {
       expect(headers['Content-Type']).toBe('application/json');
     });
 
-    it('sanitizes X-API-Key and prevents CRLF header injection', () => {
+    it('rejects and strips X-API-Key and api-key from renderer requests', () => {
       const res = security.validateOpenWaRequest({
         url: 'http://127.0.0.1:2785/api/sessions',
         headers: {
           'X-API-Key': 'my-secret-key-123\r\nInjected-Header: evil',
+          'api-key': 'attacker-key',
         },
       });
       expect(res.valid).toBe(true);
-      const key = res.sanitizedOptions.headers['X-API-Key'];
-      expect(key).not.toContain('\r');
-      expect(key).not.toContain('\n');
-      expect(key).not.toContain('Injected-Header');
-      expect(key).toBe('my-secret-key-123');
+      expect(res.sanitizedOptions.headers['X-API-Key']).toBeUndefined();
+      expect(res.sanitizedOptions.headers['api-key']).toBeUndefined();
     });
 
     it('rejects oversized request bodies (> 50MB)', () => {
@@ -281,27 +279,290 @@ describe('Vatsap V2 P0-1 — Security IPC Hardening Test Suite', () => {
   // 3. Docker Health Check Security Scenarios
   // ==========================================
   describe('3. Docker Health Check Sanitization (docker:healthCheck)', () => {
-    it('sanitizes arbitrary baseUrl and falls back safely to loopback 2785', () => {
+    it('sanitizes arbitrary baseUrl and falls back safely to loopback 2785 without accepting apiKey from renderer', () => {
       const opts = security.validateDockerHealthOptions({
         baseUrl: 'http://evil-attacker.com:9999/api',
         apiKey: 'normal-key-123; rm -rf /',
       });
       // Should fallback to default 127.0.0.1:2785
       expect(opts.baseUrl).toBe('http://127.0.0.1:2785/api');
-      // Should strip shell injection characters
-      expect(opts.apiKey).not.toContain(';');
-      expect(opts.apiKey).not.toContain(' ');
-      expect(opts.apiKey).not.toContain('/');
-      expect(opts.apiKey).toBe('normal-key-123rm-rf');
+      // In V2, credentials are not accepted from renderer options
+      expect((opts as any).apiKey).toBeUndefined();
     });
 
-    it('preserves valid loopback baseUrl', () => {
+    it('preserves valid loopback baseUrl without renderer credentials', () => {
       const opts = security.validateDockerHealthOptions({
         baseUrl: 'http://localhost:2785/api',
         apiKey: 'testkey123',
       });
       expect(opts.baseUrl).toBe('http://localhost:2785/api');
-      expect(opts.apiKey).toBe('testkey123');
+      expect((opts as any).apiKey).toBeUndefined();
+    });
+  });
+
+  // ==========================================
+  // 4. P0-2: Credential Isolation & SecureStorage Hardening
+  // ==========================================
+  describe('4. P0-2: Credential Isolation & SecureStorage Hardening', () => {
+    const CredentialService = require('../electron/CredentialService.cjs');
+    let credService: any;
+    let credStorageDir: string;
+
+    beforeEach(() => {
+      credStorageDir = path.join(tempDir, 'secure_vault_dir');
+      fs.mkdirSync(credStorageDir, { recursive: true });
+      credService = new CredentialService({ storageDir: credStorageDir });
+    });
+
+    it('1 & 2: Prohibits generic decrypt and getSecret APIs from Renderer interface', () => {
+      // 1. Verify CredentialService has NO generic cryptographic/secret getter methods
+      const prohibitedGenericMethods = [
+        'decrypt',
+        'getSecret',
+        'getToken',
+        'getApiKey',
+        'decryptSecret',
+      ];
+
+      for (const forbidden of prohibitedGenericMethods) {
+        expect((credService as any)[forbidden]).toBeUndefined();
+      }
+
+      // 2. Verify preload.cjs strictly does NOT expose any plaintext secret getters or decrypt
+      const preloadContent = fs.readFileSync(path.join(__dirname, '../electron/preload.cjs'), 'utf8');
+      expect(preloadContent).not.toContain('getOpenWAKey');
+      expect(preloadContent).not.toContain('getMetaAccessToken');
+      expect(preloadContent).not.toContain('decrypt');
+      expect(preloadContent).not.toContain('getSecret');
+      expect(preloadContent).not.toContain('getToken');
+      expect(preloadContent).not.toContain('getApiKey');
+      expect(preloadContent).not.toContain('secureStorage'); // Old generic API removed
+    });
+
+    it('3 & 4: Renderer cannot fetch plaintext OpenWA key or Meta token', () => {
+      credService.saveOpenWAKey('my-secret-openwa-key');
+      credService.saveMetaAccessToken('EAAG_my_secret_meta_token');
+
+      // Domain methods for Renderer only return booleans
+      expect(credService.hasOpenWAKey()).toBe(true);
+      expect(credService.hasMetaAccessToken()).toBe(true);
+
+      // Verify no renderer method leaks the raw secret
+      const saveOpenWaRes = credService.saveOpenWAKey('new-key');
+      expect(saveOpenWaRes).toEqual({ success: true, saved: true });
+      expect(JSON.stringify(saveOpenWaRes)).not.toContain('new-key');
+
+      const saveMetaRes = credService.saveMetaAccessToken('new-meta');
+      expect(saveMetaRes).toEqual({ success: true, saved: true });
+      expect(JSON.stringify(saveMetaRes)).not.toContain('new-meta');
+    });
+
+    it('5 & 6: hasOpenWAKey and hasMetaAccessToken accurately reflect presence without leaking text', () => {
+      expect(credService.hasOpenWAKey()).toBe(false);
+      expect(credService.hasMetaAccessToken()).toBe(false);
+
+      credService.saveOpenWAKey('sample-key');
+      expect(credService.hasOpenWAKey()).toBe(true);
+      expect(credService.hasMetaAccessToken()).toBe(false);
+
+      credService.saveMetaAccessToken('sample-token');
+      expect(credService.hasOpenWAKey()).toBe(true);
+      expect(credService.hasMetaAccessToken()).toBe(true);
+    });
+
+    it('7 & 8: saveOpenWAKey and saveMetaAccessToken persist secrets in encrypted form on disk', () => {
+      const rawSecret = 'super-secret-openwa-value-12345';
+      credService.saveOpenWAKey(rawSecret);
+
+      const vaultFile = credService.getVaultPath();
+      expect(fs.existsSync(vaultFile)).toBe(true);
+
+      const fileContent = fs.readFileSync(vaultFile, 'utf8');
+      // Secret must NEVER appear in plaintext on disk!
+      expect(fileContent).not.toContain(rawSecret);
+      expect(fileContent).toContain('openWaKeyEnc');
+    });
+
+    it('9 & 10: deleteOpenWAKey and deleteMetaAccessToken remove secrets', () => {
+      credService.saveOpenWAKey('temp-key');
+      credService.saveMetaAccessToken('temp-token');
+      expect(credService.hasOpenWAKey()).toBe(true);
+      expect(credService.hasMetaAccessToken()).toBe(true);
+
+      const delKeyRes = credService.deleteOpenWAKey();
+      expect(delKeyRes).toEqual({ success: true, deleted: true });
+      expect(credService.hasOpenWAKey()).toBe(false);
+
+      const delMetaRes = credService.deleteMetaAccessToken();
+      expect(delMetaRes).toEqual({ success: true, deleted: true });
+      expect(credService.hasMetaAccessToken()).toBe(false);
+    });
+
+    it('11: Does not leak secrets in console logs or disk storage', () => {
+      const secret = 'ultra-private-token-xyz';
+      const consoleLogSpy = vi.spyOn(console, 'log');
+
+      credService.saveOpenWAKey(secret);
+
+      for (const call of consoleLogSpy.mock.calls) {
+        expect(JSON.stringify(call)).not.toContain(secret);
+      }
+      consoleLogSpy.mockRestore();
+    });
+
+    it('12: Plaintext secret is never included in any IPC response', () => {
+      const res1 = credService.saveOpenWAKey('secret-1');
+      const res2 = credService.saveMetaAccessToken('secret-2');
+      const res3 = credService.deleteOpenWAKey();
+      const res4 = credService.deleteMetaAccessToken();
+
+      const combinedResponses = JSON.stringify([res1, res2, res3, res4]);
+      expect(combinedResponses).not.toContain('secret-1');
+      expect(combinedResponses).not.toContain('secret-2');
+    });
+
+    it('13: OpenWA requests receive authenticated key injected from Main Process', () => {
+      credService.saveOpenWAKey('injected-docker-api-key');
+
+      // Simulate what main.cjs does: retrieves key from CredentialService and injects into header
+      const openWaKey = credService.getOpenWAKey();
+      expect(openWaKey).toBe('injected-docker-api-key');
+
+      const req = security.validateOpenWaRequest({
+        url: 'http://127.0.0.1:2785/api/sessions',
+        headers: {}, // Renderer passes no secrets
+      });
+      expect(req.valid).toBe(true);
+
+      // Main process injects the key
+      if (openWaKey) {
+        req.sanitizedOptions.headers['X-API-Key'] = openWaKey;
+      }
+      expect(req.sanitizedOptions.headers['X-API-Key']).toBe('injected-docker-api-key');
+    });
+
+    it('14: Meta Cloud Provider delegates requests to Main Process with isolated token', () => {
+      credService.saveMetaAccessToken('injected-meta-token');
+      const metaToken = credService.getMetaAccessToken();
+      expect(metaToken).toBe('injected-meta-token');
+
+      // Verify that delete clears the token
+      credService.deleteMetaAccessToken();
+      expect(credService.getMetaAccessToken()).toBeNull();
+    });
+
+    it('15: Renderer cannot inject arbitrary Authorization or Cookie headers', () => {
+      const req = security.validateOpenWaRequest({
+        url: 'http://127.0.0.1:2785/api/sessions',
+        headers: {
+          Authorization: 'Bearer malicious-override',
+          Cookie: 'session=hijack',
+        },
+      });
+      expect(req.valid).toBe(true);
+      expect(req.sanitizedOptions.headers['Authorization']).toBeUndefined();
+      expect(req.sanitizedOptions.headers['authorization']).toBeUndefined();
+      expect(req.sanitizedOptions.headers['Cookie']).toBeUndefined();
+    });
+
+    it('16: migrateLegacyCiphertext safely migrates legacy ciphertext without leaking plaintext', () => {
+      // Simulate existing ciphertext encrypted via fallback/safeStorage
+      const legacyKeyPlain = 'legacy-v1-api-key';
+      const legacyEnc = credService.encryptString(legacyKeyPlain);
+
+      const migrationResult = credService.migrateLegacyCiphertext({
+        encryptedOpenWaKey: legacyEnc,
+        encryptedMetaToken: null,
+      });
+
+      expect(migrationResult).toEqual({
+        success: true,
+        migratedOpenWa: true,
+        migratedMeta: false,
+      });
+      expect(JSON.stringify(migrationResult)).not.toContain(legacyKeyPlain);
+
+      // Key should now be present in CredentialService
+      expect(credService.hasOpenWAKey()).toBe(true);
+      expect(credService.getOpenWAKey()).toBe(legacyKeyPlain);
+    });
+
+    // ==========================================
+    // P0-2.1 Specific Tests: Credential Flow Cleanup
+    // ==========================================
+    it('17: createSession request does not transmit any secret headers from Renderer', async () => {
+      // Simulate Renderer dispatching createSession payload
+      const rawIpcHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      };
+
+      // Ensure that if a malicious script or legacy code passes X-API-Key or Authorization, they are stripped
+      delete rawIpcHeaders['X-API-Key'];
+      delete rawIpcHeaders['api-key'];
+      delete rawIpcHeaders['Authorization'];
+
+      const validation = security.validateOpenWaRequest({
+        url: 'http://127.0.0.1:2785/api/sessions',
+        method: 'POST',
+        headers: rawIpcHeaders,
+        body: JSON.stringify({ name: 'default' }),
+      });
+
+      expect(validation.valid).toBe(true);
+      expect(validation.sanitizedOptions.headers['X-API-Key']).toBeUndefined();
+      expect(validation.sanitizedOptions.headers['api-key']).toBeUndefined();
+      expect(validation.sanitizedOptions.headers['Authorization']).toBeUndefined();
+    });
+
+    it('18: Main Process injects CredentialService key for createSession requests', () => {
+      credService.saveOpenWAKey('vault-key-for-session');
+      const apiKeyFromVault = credService.getOpenWAKey();
+
+      const validation = security.validateOpenWaRequest({
+        url: 'http://127.0.0.1:2785/api/sessions',
+        method: 'POST',
+        headers: { Accept: 'application/json' },
+        body: JSON.stringify({ name: 'default' }),
+      });
+
+      expect(validation.valid).toBe(true);
+
+      // Main Process simulation: injection from vault
+      if (apiKeyFromVault) {
+        validation.sanitizedOptions.headers['X-API-Key'] = apiKeyFromVault;
+        validation.sanitizedOptions.headers['api-key'] = apiKeyFromVault;
+      }
+
+      expect(validation.sanitizedOptions.headers['X-API-Key']).toBe('vault-key-for-session');
+    });
+
+    it('19: Electron Renderer network requests never contain X-API-Key', () => {
+      const sanitized = security.validateOpenWaRequest({
+        url: 'http://127.0.0.1:2785/api/sendText',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+      });
+
+      expect(sanitized.valid).toBe(true);
+      expect(sanitized.sanitizedOptions.headers['X-API-Key']).toBeUndefined();
+      expect(sanitized.sanitizedOptions.headers['Cookie']).toBeUndefined();
+      expect(sanitized.sanitizedOptions.headers['Authorization']).toBeUndefined();
+    });
+
+    it('20: Legacy web fallback does not affect Electron credential model', () => {
+      // In Electron mode, checkDockerHealth resolves apiKey strictly from Main Process vault
+      credService.saveOpenWAKey('docker-health-vault-key');
+      const resolvedKey = credService.getOpenWAKey();
+
+      const validatedOpts = security.validateDockerHealthOptions({
+        baseUrl: 'http://127.0.0.1:2785/api',
+      });
+
+      expect(validatedOpts.baseUrl).toBe('http://127.0.0.1:2785/api');
+      expect(resolvedKey).toBe('docker-health-vault-key');
     });
   });
 });

@@ -202,14 +202,17 @@ function validateOpenWaRequest(options) {
     for (const [key, value] of Object.entries(headers)) {
       const lowerKey = key.toLowerCase();
 
-      // Explicitly reject dangerous or tracking headers
+      // Explicitly reject dangerous, tracking, or credential headers from Renderer.
+      // In V2 Credential Isolation model, Renderer is untrusted and must never supply authentication headers.
       if (
         lowerKey === 'cookie' ||
         lowerKey === 'authorization' ||
         lowerKey === 'proxy-authorization' ||
         lowerKey === 'host' ||
         lowerKey === 'origin' ||
-        lowerKey === 'referer'
+        lowerKey === 'referer' ||
+        lowerKey === 'x-api-key' ||
+        lowerKey === 'api-key'
       ) {
         continue;
       }
@@ -226,17 +229,6 @@ function validateOpenWaRequest(options) {
       // Allow Accept
       if (lowerKey === 'accept') {
         sanitizedHeaders['Accept'] = String(value);
-        continue;
-      }
-
-      // API Key handling: sanitize value (only before newline/CR, alphanumeric, dashes, underscores, max 256)
-      if (lowerKey === 'x-api-key' || lowerKey === 'api-key') {
-        const firstLine = String(value).split(/[\r\n]/)[0];
-        const cleanVal = firstLine.replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 256);
-        if (cleanVal) {
-          sanitizedHeaders['X-API-Key'] = cleanVal;
-          sanitizedHeaders['api-key'] = cleanVal;
-        }
         continue;
       }
     }
@@ -286,12 +278,12 @@ function validateOpenWaRequest(options) {
 }
 
 /**
- * Validates and sanitizes options for docker:healthCheck
+ * Validates and sanitizes options for docker:healthCheck.
+ * In V2, credentials are not accepted from the untrusted Renderer.
  */
 function validateDockerHealthOptions(options) {
   const safeOptions = {
     baseUrl: 'http://127.0.0.1:2785/api',
-    apiKey: '',
   };
 
   if (options && typeof options === 'object') {
@@ -304,11 +296,6 @@ function validateDockerHealthOptions(options) {
       } catch {
         // Fallback to default
       }
-    }
-
-    if (typeof options.apiKey === 'string') {
-      // Remove any control characters or shell metacharacters
-      safeOptions.apiKey = options.apiKey.replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 256);
     }
   }
 

@@ -2,6 +2,7 @@ import { SendOutcome } from './whatsapp';
 
 export interface HistoryItem {
   id: string;
+  studentId?: string;
   studentName: string;
   parentName: string;
   maskedPhone: string;

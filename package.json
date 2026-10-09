@@ -13,6 +13,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist release",
     "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "electron:start": "electron .",
     "sign:mac": "codesign --force --deep -s - \"release/mac-arm64/Karne Gonderici.app\" && xattr -cr \"release/mac-arm64/Karne Gonderici.app\"",

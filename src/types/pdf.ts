@@ -8,6 +8,7 @@ export interface LocalPdfFile {
   path?: string;
   file?: File;
   base64?: string;
+  hash?: string;
   extractedText?: string;
 }
 
@@ -40,5 +41,14 @@ export interface MatchedItem {
   hasConflict?: boolean;
   isManuallyAssigned?: boolean;
   needsConfirmation?: boolean;
+  userConfirmed?: boolean;
+  confirmedAt?: string;
+  confirmedStudentId?: string;
+  confirmedPdfName?: string;
+  confirmedPdfSize?: number;
+  confirmedPdfLastModified?: number;
+  confirmedPdfHash?: string;
+  confirmedStudentPhone?: string;
+  confirmedStudentName?: string;
   attempts?: number;
 }

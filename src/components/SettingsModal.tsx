@@ -29,7 +29,6 @@ import {
 
 export interface StartSessionParams {
   baseUrl: string;
-  apiKey: string;
   sessionId: string;
 }
 
@@ -82,12 +81,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   // OpenWA fields
   const [baseUrl, setBaseUrl] = useState(config.baseUrl || 'http://127.0.0.1:2785/api');
-  const [apiKey, setApiKey] = useState(config.apiKey || '');
+  const [apiKey, setApiKey] = useState('');
   const [sessionId, setSessionId] = useState(config.sessionId || 'default');
+  const [hasOpenWaKey, setHasOpenWaKey] = useState(false);
 
   // Meta Cloud API fields
-  const [metaToken, setMetaToken] = useState(config.metaToken || '');
+  const [metaToken, setMetaToken] = useState('');
   const [metaPhoneNumberId, setMetaPhoneNumberId] = useState(config.metaPhoneNumberId || '');
+  const [hasMetaAccessToken, setHasMetaAccessToken] = useState(false);
 
   // General fields
   const [delaySeconds, setDelaySeconds] = useState(config.delaySeconds || 3);
@@ -145,9 +146,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     if (isOpen) {
       setProviderType(config.providerType || 'openwa');
       setBaseUrl(config.baseUrl || 'http://127.0.0.1:2785/api');
-      setApiKey(config.apiKey || '');
+      setApiKey('');
       setSessionId(config.sessionId || 'default');
-      setMetaToken(config.metaToken || '');
+      setMetaToken('');
       setMetaPhoneNumberId(config.metaPhoneNumberId || '');
       setDelaySeconds(config.delaySeconds || 3);
       setMaxRetries(config.maxRetries ?? 2);
@@ -155,10 +156,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setSchoolName(config.schoolName || 'Özel Başarı Okulları');
       setExamName(config.examName || 'Genel Değerlendirme Sınavı');
       setFeedback(null);
+
+      // Check whether secrets are safely saved in Electron Main Process
+      if (typeof window !== 'undefined' && window.electronAPI?.credentials) {
+        window.electronAPI.credentials.hasOpenWAKey().then(setHasOpenWaKey).catch(() => {});
+        window.electronAPI.credentials.hasMetaAccessToken().then(setHasMetaAccessToken).catch(() => {});
+      }
     }
   }, [isOpen, config]);
 
   if (!isOpen) return null;
+
+  const handleDeleteOpenWaKey = async () => {
+    if (typeof window !== 'undefined' && window.electronAPI?.credentials) {
+      await window.electronAPI.credentials.deleteOpenWAKey();
+      setHasOpenWaKey(false);
+      setApiKey('');
+    }
+  };
+
+  const handleDeleteMetaToken = async () => {
+    if (typeof window !== 'undefined' && window.electronAPI?.credentials) {
+      await window.electronAPI.credentials.deleteMetaAccessToken();
+      setHasMetaAccessToken(false);
+      setMetaToken('');
+    }
+  };
 
   const trimmedKey = (providerType === 'meta_cloud' ? metaToken : apiKey).trim();
   const isGeminiKey = trimmedKey.startsWith('AIzaSy');
@@ -174,12 +197,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     });
 
     try {
+      // Save secrets to Electron Main Process Credential Vault
+      if (typeof window !== 'undefined' && window.electronAPI?.credentials) {
+        if (apiKey.trim()) {
+          await window.electronAPI.credentials.saveOpenWAKey(apiKey.trim());
+          setHasOpenWaKey(true);
+          setApiKey('');
+        }
+        if (metaToken.trim()) {
+          await window.electronAPI.credentials.saveMetaAccessToken(metaToken.trim());
+          setHasMetaAccessToken(true);
+          setMetaToken('');
+        }
+      }
+
+      // Updated config contains NO plaintext secrets
       const updatedConfig = {
         providerType,
         baseUrl: baseUrl.trim(),
-        apiKey: apiKey.trim(),
+        apiKey: '',
         sessionId: sessionId.trim() || 'default',
-        metaToken: metaToken.trim(),
+        metaToken: '',
         metaPhoneNumberId: metaPhoneNumberId.trim(),
         delaySeconds: Number(delaySeconds) || 3,
         maxRetries: Number(maxRetries) || 2,
@@ -275,9 +313,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     });
 
     try {
+      // If user typed an apiKey, securely save it to Electron Main Process vault first
+      if (typeof window !== 'undefined' && window.electronAPI?.credentials && apiKey.trim()) {
+        await window.electronAPI.credentials.saveOpenWAKey(apiKey.trim());
+        setHasOpenWaKey(true);
+        setApiKey('');
+      }
+
       const result = await onStartSession({
         baseUrl: baseUrl.trim(),
-        apiKey: apiKey.trim(),
         sessionId: sessionId.trim() || 'default',
       });
 
@@ -320,14 +364,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setIsRunningDiagnostic(true);
     try {
       if (typeof window !== 'undefined' && window.electronAPI?.checkDockerHealth) {
-        const res = await window.electronAPI.checkDockerHealth({ baseUrl, apiKey });
+        const res = await window.electronAPI.checkDockerHealth({ baseUrl });
         if (res && res.diagnostic) {
           setDiagnostic(res.diagnostic);
         }
       } else {
-        const res = await fetch(`/api/docker-health?url=${encodeURIComponent(baseUrl)}`, {
-          headers: apiKey ? { 'X-API-Key': apiKey } : {},
-        });
+        const res = await fetch(`/api/docker-health?url=${encodeURIComponent(baseUrl)}`);
         const json = await res.json();
         if (json && json.diagnostic) {
           setDiagnostic(json.diagnostic);
@@ -649,16 +691,33 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1">
-                    Meta Erişim Belirteci (Permanent / Temporary Access Token)
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
+                      Meta Erişim Belirteci (Access Token)
+                    </label>
+                    {hasMetaAccessToken && (
+                      <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium flex items-center gap-1">
+                        <span>🔒 Kayıtlı (macOS Keychain)</span>
+                        <button
+                          type="button"
+                          onClick={handleDeleteMetaToken}
+                          className="text-[10px] text-rose-600 dark:text-rose-400 hover:underline cursor-pointer ml-1"
+                        >
+                          [Sil]
+                        </button>
+                      </span>
+                    )}
+                  </div>
                   <input
                     type="password"
                     value={metaToken}
                     onChange={(e) => setMetaToken(e.target.value)}
-                    placeholder="EAAG..."
+                    placeholder={hasMetaAccessToken ? 'Kayıtlı belirteci değiştirmek için yeni token girin...' : 'EAAG...'}
                     className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg text-xs font-mono text-neutral-900 dark:text-neutral-100 focus:outline-hidden focus:ring-1 focus:ring-blue-600 bg-white dark:bg-neutral-800"
                   />
+                  <p className="text-[10px] text-neutral-400 mt-1">
+                    Güvenlik: Erişim belirteci Renderer belleğinde tutulmaz, Main Process safeStorage kasasında korunur.
+                  </p>
                 </div>
 
                 <div>
@@ -737,19 +796,33 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <label className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
                       OpenWA API Gizli Anahtarı (api-key)
                     </label>
-                    <button
-                      type="button"
-                      onClick={() => setShowKey(!showKey)}
-                      className="text-[11px] text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200 cursor-pointer"
-                    >
-                      {showKey ? 'Gizle' : 'Göster'}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {hasOpenWaKey && (
+                        <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium flex items-center gap-1">
+                          <span>🔒 Kayıtlı (macOS Keychain)</span>
+                          <button
+                            type="button"
+                            onClick={handleDeleteOpenWaKey}
+                            className="text-[10px] text-rose-600 dark:text-rose-400 hover:underline cursor-pointer ml-1"
+                          >
+                            [Sil]
+                          </button>
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setShowKey(!showKey)}
+                        className="text-[11px] text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200 cursor-pointer"
+                      >
+                        {showKey ? 'Gizle' : 'Göster'}
+                      </button>
+                    </div>
                   </div>
                   <input
                     type={showKey ? 'text' : 'password'}
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="Eğer sunucunuzda API anahtarı ayarlıysa girin (isteğe bağlı)"
+                    placeholder={hasOpenWaKey ? 'Kayıtlı anahtarı değiştirmek için yenisini girin...' : 'Eğer sunucunuzda API anahtarı ayarlıysa girin (isteğe bağlı)'}
                     className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg text-xs font-mono text-neutral-900 dark:text-neutral-100 focus:outline-hidden focus:ring-1 focus:ring-neutral-900 dark:focus:ring-neutral-400 bg-white dark:bg-neutral-800"
                   />
                   <p className="text-[10px] text-neutral-400 mt-1">
@@ -758,7 +831,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   {typeof window !== 'undefined' && window.electronAPI?.isElectron ? (
                     <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 p-1.5 rounded border border-emerald-200 dark:border-emerald-800">
                       <span>🔒</span>
-                      <span>macOS Keychain &amp; Electron safeStorage ile donanım düzeyinde şifrelenerek saklanır.</span>
+                      <span>macOS Keychain &amp; Electron safeStorage kasasında izole edilerek saklanır. Renderer sürecine geri verilmez.</span>
                     </div>
                   ) : (
                     <div className="mt-1.5 flex items-start gap-1.5 text-[10px] text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 p-1.5 rounded border border-amber-200 dark:border-amber-800">

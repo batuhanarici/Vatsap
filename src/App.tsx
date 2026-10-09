@@ -50,6 +50,7 @@ import { WhatsAppWebProvider } from './services/whatsapp/WhatsAppWebProvider';
 import { MetaCloudProvider } from './services/whatsapp/MetaCloudProvider';
 import { WhatsAppProvider } from './services/whatsapp/types';
 import { executeSenderQueue, QueueProgressEvent } from './services/senderQueue';
+import { computeQuickHash } from './services/dispatchSafetyGate';
 import { ManualMatchModal } from './components/ManualMatchModal';
 import { OcrFailureModal } from './components/OcrFailureModal';
 import { BackupPreviewModal } from './components/BackupPreviewModal';
@@ -491,6 +492,11 @@ export default function App() {
           matchMethod: 'manual',
           isManuallyAssigned: false,
           needsConfirmation: false,
+          userConfirmed: false,
+          confirmedAt: undefined,
+          confirmedPdfName: undefined,
+          confirmedStudentPhone: undefined,
+          confirmedStudentName: undefined,
           matchReason: 'PDF ataması kaldırıldı',
         },
       }));
@@ -506,6 +512,9 @@ export default function App() {
       name: currentItem ? `${currentItem.student.studentName}.pdf` : pdfFile.name,
     };
 
+    const chosenPdfName = pdfFile.originalName || pdfFile.name;
+    const chosenPdfHash = pdfFile.hash || (pdfFile.base64 ? computeQuickHash(pdfFile.base64) : undefined);
+
     setItemOverrides((prev) => ({
       ...prev,
       [studentId]: {
@@ -515,7 +524,16 @@ export default function App() {
         matchMethod: 'manual',
         isManuallyAssigned: true,
         needsConfirmation: false,
-        matchReason: `Kullanıcı tarafından manuel olarak atandı (${pdfFile.originalName || pdfFile.name})`,
+        userConfirmed: true,
+        confirmedAt: new Date().toISOString(),
+        confirmedStudentId: studentId,
+        confirmedPdfName: chosenPdfName,
+        confirmedPdfSize: pdfFile.size,
+        confirmedPdfLastModified: pdfFile.lastModified,
+        confirmedPdfHash: chosenPdfHash,
+        confirmedStudentPhone: currentItem?.student.phone,
+        confirmedStudentName: currentItem?.student.studentName,
+        matchReason: `Kullanıcı tarafından manuel olarak atandı (${chosenPdfName})`,
       },
     }));
 
@@ -530,12 +548,24 @@ export default function App() {
     const item = matchedItems.find((i) => i.student.id === studentId);
     if (!item) return;
 
+    const pdfName = item.pdfFile?.originalName || item.pdfFile?.name;
+    const pdfHash = item.pdfFile?.hash || (item.pdfFile?.base64 ? computeQuickHash(item.pdfFile.base64) : undefined);
+
     setItemOverrides((prev) => ({
       ...prev,
       [studentId]: {
         ...item,
         status: item.student.phone && item.student.phone.length >= 10 ? 'ready' : 'invalid_phone',
         needsConfirmation: false,
+        userConfirmed: true,
+        confirmedAt: new Date().toISOString(),
+        confirmedStudentId: studentId,
+        confirmedPdfName: pdfName,
+        confirmedPdfSize: item.pdfFile?.size,
+        confirmedPdfLastModified: item.pdfFile?.lastModified,
+        confirmedPdfHash: pdfHash,
+        confirmedStudentPhone: item.student.phone,
+        confirmedStudentName: item.student.studentName,
         matchReason: (item.matchReason || '') + ' (Kullanıcı tarafından onaylandı)',
       },
     }));
@@ -1218,16 +1248,14 @@ export default function App() {
             message: 'OpenWA üzerinde oturum başlatılıyor...',
           });
 
-          // 1. Immediately apply latest credentials from the Settings form
+          // 1. Immediately apply latest settings from the Settings form
           if (sessionParams) {
             openWaProvider.updateConfig({
               baseUrl: sessionParams.baseUrl,
-              apiKey: sessionParams.apiKey,
               sessionId: sessionParams.sessionId,
             });
             const updated = {
               baseUrl: sessionParams.baseUrl,
-              apiKey: sessionParams.apiKey,
               sessionId: sessionParams.sessionId,
             };
             setConfig((prev) => ({ ...prev, ...updated }));

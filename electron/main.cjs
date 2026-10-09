@@ -5,6 +5,7 @@ const os = require('os');
 const net = require('net');
 const { exec, spawn } = require('child_process');
 const { promisify } = require('util');
+const CredentialService = require('./CredentialService.cjs');
 const {
   registerAllowedDirectory,
   validatePdfPath,
@@ -14,6 +15,7 @@ const {
 
 const execAsync = promisify(exec);
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+const credentialService = new CredentialService();
 
 let expressProcess = null;
 let activeServerPort = 3000;
@@ -163,40 +165,299 @@ ipcMain.handle('file:readBase64', async (_, filePath) => {
   }
 });
 
-// Secure Storage via Electron safeStorage (macOS Keychain / OS-level encryption)
-ipcMain.handle('secure:isAvailable', () => {
-  return Boolean(safeStorage && safeStorage.isEncryptionAvailable && safeStorage.isEncryptionAvailable());
+// Domain-Specific Credential IPC Handlers (Renderer CANNOT decrypt or fetch plaintext secrets)
+ipcMain.handle('credentials:isAvailable', () => {
+  return credentialService.isEncryptionAvailable();
 });
 
-ipcMain.handle('secure:encrypt', (_, plainText) => {
-  if (!plainText) return '';
-  if (safeStorage && safeStorage.isEncryptionAvailable && safeStorage.isEncryptionAvailable()) {
-    try {
-      const buffer = safeStorage.encryptString(plainText);
-      return buffer.toString('base64');
-    } catch (err) {
-      console.error('safeStorage şifreleme hatası:', err);
-      return plainText;
-    }
+ipcMain.handle('credentials:hasOpenWAKey', () => {
+  return credentialService.hasOpenWAKey();
+});
+
+ipcMain.handle('credentials:saveOpenWAKey', (_, key) => {
+  return credentialService.saveOpenWAKey(key);
+});
+
+ipcMain.handle('credentials:deleteOpenWAKey', () => {
+  return credentialService.deleteOpenWAKey();
+});
+
+ipcMain.handle('credentials:hasMetaAccessToken', () => {
+  return credentialService.hasMetaAccessToken();
+});
+
+ipcMain.handle('credentials:saveMetaAccessToken', (_, token) => {
+  return credentialService.saveMetaAccessToken(token);
+});
+
+ipcMain.handle('credentials:deleteMetaAccessToken', () => {
+  return credentialService.deleteMetaAccessToken();
+});
+
+ipcMain.handle('credentials:migrateLegacy', (_, payload) => {
+  return credentialService.migrateLegacyCiphertext(payload);
+});
+
+// IPC Handlers for Meta WhatsApp Cloud API (Executes in Main Process with isolated credentials)
+ipcMain.handle('meta:getStatus', async (_, options) => {
+  const { phoneNumberId } = options || {};
+  if (!phoneNumberId || !phoneNumberId.trim()) {
+    return {
+      state: 'disconnected',
+      sessionId: 'meta_cloud',
+      details: 'Phone Number ID (Telefon Numarası Kimliği) girilmedi.',
+    };
   }
-  return plainText;
-});
 
-ipcMain.handle('secure:decrypt', (_, cipherTextBase64) => {
-  if (!cipherTextBase64) return '';
-  if (safeStorage && safeStorage.isEncryptionAvailable && safeStorage.isEncryptionAvailable()) {
-    try {
-      const buffer = Buffer.from(cipherTextBase64, 'base64');
-      return safeStorage.decryptString(buffer);
-    } catch (err) {
-      console.error('safeStorage çözme hatası:', err);
-      return cipherTextBase64;
-    }
+  const metaToken = credentialService.getMetaAccessToken();
+  if (!metaToken) {
+    return {
+      state: 'disconnected',
+      sessionId: 'meta_cloud',
+      details: 'Meta API Erişim Belirteci kaydedilmemiş.',
+    };
   }
-  return cipherTextBase64;
+
+  try {
+    const response = await fetch(
+      `https://graph.facebook.com/v21.0/${encodeURIComponent(phoneNumberId.trim())}`,
+      {
+        headers: {
+          Authorization: `Bearer ${metaToken}`,
+        },
+      }
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      const errMsg = errorData?.error?.message || `HTTP ${response.status} hatası`;
+      return {
+        state: 'error',
+        sessionId: 'meta_cloud',
+        details: `Meta API Hatası: ${errMsg}`,
+      };
+    }
+
+    const data = await response.json();
+    const phoneDisplay = data.display_phone_number || data.verified_name || 'Aktif';
+
+    return {
+      state: 'connected',
+      sessionId: 'meta_cloud',
+      details: `Meta WhatsApp Cloud API bağlı (${phoneDisplay})`,
+      phoneConnected: phoneDisplay,
+    };
+  } catch (err) {
+    return {
+      state: 'error',
+      sessionId: 'meta_cloud',
+      details: 'Meta sunucularına erişilemedi.',
+    };
+  }
 });
 
-// IPC Handler for OpenWA HTTP API requests (Hardened: Loopback 2785 only, no arbitrary network/headers)
+ipcMain.handle('meta:sendMessage', async (_, options) => {
+  const { phoneNumberId, phone, message } = options || {};
+  if (!phoneNumberId || !phone || !message) {
+    return {
+      success: false,
+      outcome: 'failed',
+      pdfSent: false,
+      messageSent: false,
+      error: 'Eksik parametreler.',
+    };
+  }
+
+  const metaToken = credentialService.getMetaAccessToken();
+  if (!metaToken) {
+    return {
+      success: false,
+      outcome: 'failed',
+      pdfSent: false,
+      messageSent: false,
+      error: 'Meta API Erişim Belirteci (Token) bulunamadı.',
+    };
+  }
+
+  try {
+    const cleanPhone = phone.replace(/[^0-9]/g, '');
+    const response = await fetch(
+      `https://graph.facebook.com/v21.0/${encodeURIComponent(phoneNumberId.trim())}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${metaToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: cleanPhone,
+          type: 'text',
+          text: {
+            preview_url: false,
+            body: message,
+          },
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      return {
+        success: false,
+        outcome: 'failed',
+        pdfSent: false,
+        messageSent: false,
+        error: errorData?.error?.message || `Gönderim başarısız (${response.status})`,
+      };
+    }
+
+    const resJson = await response.json();
+    return {
+      success: true,
+      outcome: 'partial_success',
+      pdfSent: false,
+      messageSent: true,
+      messageId: resJson?.messages?.[0]?.id,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      outcome: 'failed',
+      pdfSent: false,
+      messageSent: false,
+      error: 'Bağlantı hatası',
+    };
+  }
+});
+
+ipcMain.handle('meta:sendDocument', async (_, options) => {
+  const { phoneNumberId, phone, base64Data, fileName, caption } = options || {};
+  if (!phoneNumberId || !phone || !base64Data) {
+    return {
+      success: false,
+      outcome: 'failed',
+      pdfSent: false,
+      messageSent: false,
+      error: 'Eksik parametreler.',
+    };
+  }
+
+  const metaToken = credentialService.getMetaAccessToken();
+  if (!metaToken) {
+    return {
+      success: false,
+      outcome: 'failed',
+      pdfSent: false,
+      messageSent: false,
+      error: 'Meta API Erişim Belirteci (Token) bulunamadı.',
+    };
+  }
+
+  try {
+    // 1. Upload media
+    const cleanBase64 = (base64Data.startsWith('data:') ? base64Data.split(',')[1] : base64Data).trim().replace(/\s+/g, '');
+    const binaryBuffer = Buffer.from(cleanBase64, 'base64');
+    const blob = new Blob([binaryBuffer], { type: 'application/pdf' });
+    const formData = new FormData();
+    formData.append('messaging_product', 'whatsapp');
+    formData.append('type', 'application/pdf');
+    formData.append('file', blob, fileName || 'karne.pdf');
+
+    const uploadRes = await fetch(
+      `https://graph.facebook.com/v21.0/${encodeURIComponent(phoneNumberId.trim())}/media`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${metaToken}`,
+        },
+        body: formData,
+      }
+    );
+
+    if (!uploadRes.ok) {
+      const errorData = await uploadRes.json().catch(() => null);
+      return {
+        success: false,
+        outcome: 'failed',
+        pdfSent: false,
+        messageSent: false,
+        error: `Meta Cloud PDF yükleme hatası: ${errorData?.error?.message || uploadRes.statusText}`,
+      };
+    }
+
+    const uploadJson = await uploadRes.json();
+    const mediaId = uploadJson?.id;
+    if (!mediaId) {
+      return {
+        success: false,
+        outcome: 'failed',
+        pdfSent: false,
+        messageSent: false,
+        error: 'Meta Cloud API geçerli bir Media ID döndürmedi.',
+      };
+    }
+
+    // 2. Send document
+    const cleanPhone = phone.replace(/[^0-9]/g, '');
+    const docPayload = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: cleanPhone,
+      type: 'document',
+      document: {
+        id: mediaId,
+        filename: fileName || 'karne.pdf',
+      },
+    };
+    if (caption && caption.trim()) {
+      docPayload.document.caption = caption.trim();
+    }
+
+    const sendRes = await fetch(
+      `https://graph.facebook.com/v21.0/${encodeURIComponent(phoneNumberId.trim())}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${metaToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(docPayload),
+      }
+    );
+
+    if (!sendRes.ok) {
+      const errorData = await sendRes.json().catch(() => null);
+      return {
+        success: false,
+        outcome: 'failed',
+        pdfSent: false,
+        messageSent: false,
+        error: errorData?.error?.message || `Mesaj gönderilemedi (${sendRes.status})`,
+      };
+    }
+
+    const sendJson = await sendRes.json();
+    return {
+      success: true,
+      outcome: 'success',
+      pdfSent: true,
+      messageSent: true,
+      messageId: sendJson?.messages?.[0]?.id,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      outcome: 'failed',
+      pdfSent: false,
+      messageSent: false,
+      error: 'Bağlantı hatası',
+    };
+  }
+});
+
+// IPC Handler for OpenWA HTTP API requests (Hardened: Loopback 2785 only, credential injected by Main)
 ipcMain.handle('openwa:request', async (_, options) => {
   const validation = validateOpenWaRequest(options);
   if (!validation.valid) {
@@ -210,6 +471,13 @@ ipcMain.handle('openwa:request', async (_, options) => {
   }
 
   const { url, method, headers, body, timeoutMs } = validation.sanitizedOptions;
+
+  // Authenticate OpenWA request using CredentialService directly inside Main Process
+  const openWaApiKey = credentialService.getOpenWAKey();
+  if (openWaApiKey) {
+    headers['X-API-Key'] = openWaApiKey;
+    headers['api-key'] = openWaApiKey;
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => {
@@ -265,7 +533,8 @@ ipcMain.handle('openwa:request', async (_, options) => {
 
 // IPC Handler: Comprehensive 5-Stage Docker & OpenWA Health Diagnostic (macOS Native, Hardened)
 ipcMain.handle('docker:healthCheck', async (_, rawOptions) => {
-  const { baseUrl, apiKey } = validateDockerHealthOptions(rawOptions);
+  const { baseUrl } = validateDockerHealthOptions(rawOptions);
+  const effectiveApiKey = credentialService.getOpenWAKey();
 
   const diagnostic = {
     dockerInstalled: false,
@@ -323,9 +592,9 @@ ipcMain.handle('docker:healthCheck', async (_, rawOptions) => {
     const timer = setTimeout(() => controller.abort(), 3500);
 
     const probeHeaders = { Accept: 'application/json' };
-    if (apiKey) {
-      probeHeaders['X-API-Key'] = apiKey;
-      probeHeaders['api-key'] = apiKey;
+    if (effectiveApiKey) {
+      probeHeaders['X-API-Key'] = effectiveApiKey;
+      probeHeaders['api-key'] = effectiveApiKey;
     }
 
     const response = await fetch(testUrl, {
@@ -429,6 +698,14 @@ ipcMain.handle('launchAgent:install', async () => {
 });
 
 app.whenReady().then(async () => {
+  try {
+    credentialService.setStorageDir(app.getPath('userData'));
+    credentialService.setSafeStorage(safeStorage);
+    credentialService.load();
+  } catch (err) {
+    console.error('[Electron] CredentialService başlatılamadı:', err);
+  }
+
   await startLocalServerIfNeeded();
   createWindow();
 

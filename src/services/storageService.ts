@@ -150,9 +150,7 @@ export const SAMPLE_TEST_STUDENTS: Student[] = [
   { id: '10', studentName: 'Defne Yıldız', parentName: 'Okan Yıldız', phone: '905431110022', group: 'Hafta Sonu Grubu' },
 ];
 
-// In-memory runtime secrets (protected from plain text localStorage dumping)
-const runtimeSecrets: { apiKey?: string; metaToken?: string } = {};
-
+// In-memory runtime secrets removed: all credentials isolated in Electron Main Process
 export const storageService = {
   getStudents(): Student[] {
     try {
@@ -519,18 +517,9 @@ export const storageService = {
         const parsed = JSON.parse(data);
         const merged = { ...DEFAULT_CONFIG, ...parsed };
 
-        // If runtime decrypted secrets exist in memory, use them
-        if (runtimeSecrets.apiKey !== undefined) {
-          merged.apiKey = runtimeSecrets.apiKey;
-        } else if (merged.apiKey === 'enc:safeStorage') {
-          merged.apiKey = ''; // Clean placeholder until decrypted
-        }
-
-        if (runtimeSecrets.metaToken !== undefined) {
-          merged.metaToken = runtimeSecrets.metaToken;
-        } else if (merged.metaToken === 'enc:safeStorage') {
-          merged.metaToken = '';
-        }
+        // Secrets are strictly isolated in Main Process: never stored or returned as plaintext
+        merged.apiKey = '';
+        merged.metaToken = '';
 
         return merged;
       }
@@ -540,28 +529,40 @@ export const storageService = {
 
     return {
       ...DEFAULT_CONFIG,
-      apiKey: runtimeSecrets.apiKey !== undefined ? runtimeSecrets.apiKey : DEFAULT_CONFIG.apiKey,
-      metaToken: runtimeSecrets.metaToken !== undefined ? runtimeSecrets.metaToken : DEFAULT_CONFIG.metaToken,
+      apiKey: '',
+      metaToken: '',
     };
   },
 
   async initSecureStorage(): Promise<void> {
     try {
-      if (typeof window !== 'undefined' && window.electronAPI?.secureStorage) {
-        const isAvail = await window.electronAPI.secureStorage.isAvailable();
+      if (typeof window !== 'undefined' && window.electronAPI?.credentials) {
+        const isAvail = await window.electronAPI.credentials.isAvailable();
         if (isAvail) {
+          // Check for legacy ciphertext stored in localStorage from V1
           const encKey = localStorage.getItem('karne_sec_key_enc');
-          if (encKey) {
-            runtimeSecrets.apiKey = await window.electronAPI.secureStorage.decrypt(encKey);
-          }
           const encMeta = localStorage.getItem('karne_sec_meta_enc');
-          if (encMeta) {
-            runtimeSecrets.metaToken = await window.electronAPI.secureStorage.decrypt(encMeta);
+
+          if (encKey || encMeta) {
+            const result = await window.electronAPI.credentials.migrateLegacy({
+              encryptedOpenWaKey: encKey,
+              encryptedMetaToken: encMeta,
+            });
+
+            if (result.success) {
+              // Securely clean up legacy ciphertexts from Renderer localStorage
+              if (result.migratedOpenWa) {
+                localStorage.removeItem('karne_sec_key_enc');
+              }
+              if (result.migratedMeta) {
+                localStorage.removeItem('karne_sec_meta_enc');
+              }
+            }
           }
         }
       }
-    } catch {
-      // Fallback
+    } catch (err) {
+      console.error('[StorageService] Güvenli depolama başlatılamadı:', err);
     }
   },
 
@@ -569,31 +570,12 @@ export const storageService = {
     const current = this.getConfig();
     const updated = { ...current, ...config };
 
-    // Update in-memory runtime secrets
-    if (config.apiKey !== undefined) {
-      runtimeSecrets.apiKey = config.apiKey;
-    }
-    if (config.metaToken !== undefined) {
-      runtimeSecrets.metaToken = config.metaToken;
-    }
-
-    // Hardware-level encryption for Electron / macOS Keychain
-    const sanitizedToStore = { ...updated };
-    if (typeof window !== 'undefined' && window.electronAPI?.secureStorage) {
-      // Encrypt sensitive secrets via Electron safeStorage and store ciphertext in separate keys
-      if (config.apiKey !== undefined) {
-        window.electronAPI.secureStorage.encrypt(config.apiKey).then((enc) => {
-          localStorage.setItem('karne_sec_key_enc', enc);
-        }).catch(() => {});
-        sanitizedToStore.apiKey = 'enc:safeStorage';
-      }
-      if (config.metaToken !== undefined) {
-        window.electronAPI.secureStorage.encrypt(config.metaToken).then((enc) => {
-          localStorage.setItem('karne_sec_meta_enc', enc);
-        }).catch(() => {});
-        sanitizedToStore.metaToken = 'enc:safeStorage';
-      }
-    }
+    // Secrets are NEVER persisted into localStorage in plaintext or ciphertext
+    const sanitizedToStore = {
+      ...updated,
+      apiKey: '',
+      metaToken: '',
+    };
 
     localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(sanitizedToStore));
   },

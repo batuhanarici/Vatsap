@@ -4,7 +4,8 @@ import { SendResult } from '../types/whatsapp';
 import { formatMessage, TemplateContext } from './templateService';
 import { fileToBase64 } from './pdfMatcher';
 import { storageService } from './storageService';
-import { maskPhoneNumber } from './normalizer';
+import { maskPhoneNumber, normalizePhoneNumber } from './normalizer';
+import { evaluateDispatchSafety, SafetyGateCode, buildDispatchKey } from './dispatchSafetyGate';
 
 export interface QueueProgressEvent {
   currentIndex: number;
@@ -101,6 +102,9 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
 
   // Track sent students to prevent accidental duplicate deliveries in the same session
   const sentStudentIds = new Set<string>();
+  const sentDispatchKeys = new Set<string>();
+  // Track currently processing student to prevent concurrent duplicate delivery
+  const inProgressStudentIds = new Set<string>();
 
   // Fetch recent history to detect same-day duplicate delivery
   const existingHistory = storageService.getHistory();
@@ -232,47 +236,41 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
       maxRetries,
     });
 
-    // 4. Duplicate Message Prevention:
-    // a. Check session set
-    if (sentStudentIds.has(student.id)) {
-      currentItem.sendingStatus = 'success';
-      currentItem.errorMessage = 'Bu oturumda zaten gönderildi (Çift gönderim engellendi).';
-      onItemUpdated(currentItem);
-      completedStudentIds.push(student.id);
-      continue;
-    }
+    // 4. Central Dispatch Safety Gate Enforcement (P0-3A / P0-3A.1)
+    // Verifies recipient, valid Turkish mobile phone, PDF integrity, match score, candidate ambiguity, post-approval changes and duplicate deliveries
+    const targetPdfFileName = `${student.studentName}.pdf`;
+    const currentDispatchKey = buildDispatchKey(student.id, examName, targetPdfFileName);
 
-    // b. Check today's history for exact same exam
-    if (preventDuplicateSends && context?.examName) {
-      const alreadySentToday = existingHistory.some(
-        (h) =>
-          h.phone === student.phone &&
-          h.status === 'success' &&
-          h.examName === context.examName &&
-          h.date.startsWith(todayDatePrefix)
-      );
+    const safetyDecision = evaluateDispatchSafety(currentItem, {
+      examName,
+      sentStudentIds,
+      sentDispatchKeys,
+      inProgressStudentIds,
+      history: existingHistory,
+      preventDuplicateSends,
+    });
 
-      if (alreadySentToday) {
-        currentItem.sendingStatus = 'success';
-        currentItem.errorMessage = `"${context.examName}" karnesi veliye bugün zaten iletildi (Çift gönderim koruması).`;
-        onItemUpdated(currentItem);
-        completedStudentIds.push(student.id);
-        continue;
-      }
-    }
-
-    // Check eligibility during validation
-    if (!pdfFile || (currentItem.status !== 'ready' && currentItem.status !== 'pending_confirmation')) {
+    if (!safetyDecision.allowed) {
       // Transition: [validating] -> [failed]
       currentItem.sendingStatus = 'failed';
-      currentItem.errorMessage = currentItem.errorMessage || 'Gönderim için hazır değil (PDF eksik veya telefon geçersiz).';
+      currentItem.errorMessage = `[Safety Gate: ${safetyDecision.code}] ${safetyDecision.reason}`;
       onItemUpdated(currentItem);
       failedCount++;
       failedStudentIds.push(student.id);
       continue;
     }
 
+    inProgressStudentIds.add(currentDispatchKey);
+    inProgressStudentIds.add(student.id);
+
+    if (!pdfFile) {
+      inProgressStudentIds.delete(currentDispatchKey);
+      inProgressStudentIds.delete(student.id);
+      continue;
+    }
+
     const messageText = formatMessage(template, student, context);
+    const cleanRecipientPhone = normalizePhoneNumber(student.phone);
 
     // Prepare PDF base64
     let base64 = pdfFile.base64;
@@ -288,8 +286,6 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
       base64 =
         'JVBERi0xLjQKJcOkw7zDtsOfCjIgMCBvYmoKPDwvTGVuZ3RoIDY4L0ZpbHRlci9GbGF0ZURlY29kZT4+c3RyZWFtCnicS0vMyUktyigw1HPJLEvN0XNLTNcz1HNLTM9ITMnWczRU0FVIzs8rVchNLMpTKM8vyklRBQDU7w31CmVuZHN0cmVhbQplbmRvYmoKCjEgMCBvYmoKPDwvVHlwZS9QYWdlcy9LaWRzWzMgMCBSXS9Db3VudCAxPj4KZW5kb2JqCgozIDAgb2JqCjw8L1R5cGUvUGFnZS9QYXJlbnQgMSAwIFIvTWVkaWFCb3hbMCAwIDU5NSA4NDJdL1Jlc291cmNlczw8L0ZvbnQ8PAo+Pj4+L0NvbnRlbnRzIDIgMCBSPj4KZW5kb2JqCgp4cmVmCjAgNAowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAxNDQgMDAwMDAgbiAKMDAwMDAwMDAxNSAwMDAwMCBuIAowMDAwMDAwMjAyIDAwMDAwIG4gCnRyYWlsZXIKPDwvUm9vdCAxIDAgUi9TaXplIDQ+PgpzdGFydHhyZWYKMzEwCiUlRU9G';
     }
-
-    const targetPdfFileName = `${student.studentName}.pdf`;
 
     // 5. Attempt Send with State Transitions: [validating] -> [sending_pdf] -> [retrying]
     let attempt = 0;
@@ -339,7 +335,7 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
       });
 
       sendResult = await provider.sendDocument(
-        student.phone,
+        cleanRecipientPhone,
         base64,
         targetPdfFileName,
         messageText
@@ -374,7 +370,7 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
         maxRetries,
       });
 
-      const fallbackResult = await provider.sendMessage(student.phone, messageText);
+      const fallbackResult = await provider.sendMessage(cleanRecipientPhone, messageText);
       if (fallbackResult.success) {
         isFallbackTextOnly = true;
         sendResult = {
@@ -395,14 +391,16 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
       onItemUpdated(currentItem);
       successCount++;
       sentStudentIds.add(student.id);
+      sentDispatchKeys.add(currentDispatchKey);
       completedStudentIds.push(student.id);
 
       storageService.addHistoryItem({
         id: `hist_${Date.now()}_${student.id}`,
+        studentId: student.id,
         studentName: student.studentName,
         parentName: student.parentName,
-        maskedPhone: maskPhoneNumber(student.phone),
-        phone: student.phone,
+        maskedPhone: maskPhoneNumber(cleanRecipientPhone),
+        phone: cleanRecipientPhone,
         pdfFileName: targetPdfFileName,
         date: new Date().toISOString(),
         status: 'success',
@@ -414,31 +412,35 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
 
       // Optional Multi-Parent Delivery: Send to 2nd parent if available
       if (sendToSecondaryParents && student.secondaryPhone && !isCancelled()) {
-        try {
-          await sleep(1500); // Friendly inter-message pause
-          const secResult = await provider.sendDocument(
-            student.secondaryPhone,
-            base64,
-            targetPdfFileName,
-            messageText
-          );
-          storageService.addHistoryItem({
-            id: `hist_sec_${Date.now()}_${student.id}`,
-            studentName: `${student.studentName} (2. Veli)`,
-            parentName: `${student.parentName} (2. Veli)`,
-            maskedPhone: maskPhoneNumber(student.secondaryPhone),
-            phone: student.secondaryPhone,
-            pdfFileName: targetPdfFileName,
-            date: new Date().toISOString(),
-            status: secResult.success ? 'success' : 'failed',
-            outcome: secResult.success ? 'success' : 'failed',
-            pdfSent: secResult.pdfSent,
-            messageSent: secResult.messageSent,
-            examName: context?.examName,
-            errorMessage: secResult.error,
-          });
-        } catch (secErr) {
-          console.error('2. Veli gönderim hatası:', secErr);
+        const cleanSecondaryPhone = normalizePhoneNumber(student.secondaryPhone);
+        if (cleanSecondaryPhone) {
+          try {
+            await sleep(1500); // Friendly inter-message pause
+            const secResult = await provider.sendDocument(
+              cleanSecondaryPhone,
+              base64,
+              targetPdfFileName,
+              messageText
+            );
+            storageService.addHistoryItem({
+              id: `hist_sec_${Date.now()}_${student.id}`,
+              studentId: student.id,
+              studentName: `${student.studentName} (2. Veli)`,
+              parentName: `${student.parentName} (2. Veli)`,
+              maskedPhone: maskPhoneNumber(cleanSecondaryPhone),
+              phone: cleanSecondaryPhone,
+              pdfFileName: targetPdfFileName,
+              date: new Date().toISOString(),
+              status: secResult.success ? 'success' : 'failed',
+              outcome: secResult.success ? 'success' : 'failed',
+              pdfSent: secResult.pdfSent,
+              messageSent: secResult.messageSent,
+              examName: context?.examName,
+              errorMessage: secResult.error,
+            });
+          } catch (secErr) {
+            console.error('2. Veli gönderim hatası:', secErr);
+          }
         }
       }
     } else if (isFallbackTextOnly || sendResult.outcome === 'partial_success') {
@@ -448,14 +450,16 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
       onItemUpdated(currentItem);
       partialSuccessCount++;
       sentStudentIds.add(student.id);
+      sentDispatchKeys.add(currentDispatchKey);
       partialStudentIds.push(student.id);
 
       storageService.addHistoryItem({
         id: `hist_${Date.now()}_${student.id}`,
+        studentId: student.id,
         studentName: student.studentName,
         parentName: student.parentName,
-        maskedPhone: maskPhoneNumber(student.phone),
-        phone: student.phone,
+        maskedPhone: maskPhoneNumber(cleanRecipientPhone),
+        phone: cleanRecipientPhone,
         pdfFileName: targetPdfFileName,
         date: new Date().toISOString(),
         status: 'partial_success',
@@ -475,10 +479,11 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
 
       storageService.addHistoryItem({
         id: `hist_${Date.now()}_${student.id}`,
+        studentId: student.id,
         studentName: student.studentName,
         parentName: student.parentName,
-        maskedPhone: maskPhoneNumber(student.phone),
-        phone: student.phone,
+        maskedPhone: maskPhoneNumber(cleanRecipientPhone),
+        phone: cleanRecipientPhone,
         pdfFileName: targetPdfFileName,
         date: new Date().toISOString(),
         status: 'failed',
@@ -489,6 +494,9 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
         examName: context?.examName,
       });
     }
+
+    inProgressStudentIds.delete(currentDispatchKey);
+    inProgressStudentIds.delete(student.id);
 
     // Update persistent queue state after processing this student
     storageService.saveActiveQueueState({

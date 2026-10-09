@@ -19,6 +19,28 @@ export class MetaCloudProvider implements WhatsAppProvider {
   }
 
   async getStatus(): Promise<WhatsAppStatus> {
+    // 1. Electron Desktop IPC Execution (Credentials isolated in Main Process)
+    if (typeof window !== 'undefined' && window.electronAPI?.metaCloud) {
+      try {
+        const result = await window.electronAPI.metaCloud.getStatus({
+          phoneNumberId: this.config.phoneNumberId,
+        });
+        return {
+          state: result.state,
+          sessionId: result.sessionId || 'meta_cloud',
+          details: result.details || '',
+          phoneConnected: result.phoneConnected,
+        };
+      } catch (err) {
+        return {
+          state: 'error',
+          sessionId: 'meta_cloud',
+          details: err instanceof Error ? err.message : 'Meta bağlantı hatası',
+        };
+      }
+    }
+
+    // 2. Web Browser Fallback
     if (!this.config.accessToken.trim()) {
       return {
         state: 'disconnected',
@@ -78,6 +100,16 @@ export class MetaCloudProvider implements WhatsAppProvider {
   }
 
   async sendMessage(phone: string, message: string): Promise<SendResult> {
+    // 1. Electron Desktop IPC Execution (Credentials isolated in Main Process)
+    if (typeof window !== 'undefined' && window.electronAPI?.metaCloud) {
+      return window.electronAPI.metaCloud.sendMessage({
+        phoneNumberId: this.config.phoneNumberId,
+        phone,
+        message,
+      });
+    }
+
+    // 2. Web Browser Fallback
     const cleanPhone = normalizePhoneNumber(phone);
     try {
       const response = await fetch(
@@ -200,6 +232,18 @@ export class MetaCloudProvider implements WhatsAppProvider {
     fileName: string,
     caption?: string
   ): Promise<SendResult> {
+    // 1. Electron Desktop IPC Execution (Credentials isolated in Main Process)
+    if (typeof window !== 'undefined' && window.electronAPI?.metaCloud) {
+      return window.electronAPI.metaCloud.sendDocument({
+        phoneNumberId: this.config.phoneNumberId,
+        phone,
+        base64Data,
+        fileName,
+        caption,
+      });
+    }
+
+    // 2. Web Browser Fallback
     const cleanPhone = normalizePhoneNumber(phone);
 
     // Step 1: Upload the PDF document to Meta Cloud to obtain Media ID

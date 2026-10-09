@@ -14,10 +14,54 @@ export interface OpenWAResponse<T = unknown> {
   error?: string;
 }
 
-export interface ElectronSecureStorage {
+export interface ElectronCredentialsAPI {
   isAvailable: () => Promise<boolean>;
-  encrypt: (plainText: string) => Promise<string>;
-  decrypt: (cipherText: string) => Promise<string>;
+  hasOpenWAKey: () => Promise<boolean>;
+  saveOpenWAKey: (key: string) => Promise<{ success: boolean; saved: boolean }>;
+  deleteOpenWAKey: () => Promise<{ success: boolean; deleted: boolean }>;
+  hasMetaAccessToken: () => Promise<boolean>;
+  saveMetaAccessToken: (token: string) => Promise<{ success: boolean; saved: boolean }>;
+  deleteMetaAccessToken: () => Promise<{ success: boolean; deleted: boolean }>;
+  migrateLegacy: (payload: { encryptedOpenWaKey?: string | null; encryptedMetaToken?: string | null }) => Promise<{
+    success: boolean;
+    migratedOpenWa: boolean;
+    migratedMeta: boolean;
+  }>;
+}
+
+export interface ElectronMetaCloudAPI {
+  getStatus: (options: { phoneNumberId: string }) => Promise<{
+    state: 'connected' | 'disconnected' | 'error';
+    sessionId?: string;
+    details?: string;
+    phoneConnected?: string;
+  }>;
+  sendMessage: (options: {
+    phoneNumberId: string;
+    phone: string;
+    message: string;
+  }) => Promise<{
+    success: boolean;
+    outcome: 'success' | 'partial_success' | 'failed' | 'cancelled' | 'retrying';
+    pdfSent: boolean;
+    messageSent: boolean;
+    messageId?: string;
+    error?: string;
+  }>;
+  sendDocument: (options: {
+    phoneNumberId: string;
+    phone: string;
+    base64Data: string;
+    fileName: string;
+    caption?: string;
+  }) => Promise<{
+    success: boolean;
+    outcome: 'success' | 'partial_success' | 'failed' | 'cancelled' | 'retrying';
+    pdfSent: boolean;
+    messageSent: boolean;
+    messageId?: string;
+    error?: string;
+  }>;
 }
 
 export interface ElectronDockerDiagnostic {
@@ -53,14 +97,15 @@ export interface ElectronAPI {
   } | null>;
   readPdfBase64: (filePath: string) => Promise<string>;
   requestOpenWA: <T = unknown>(options: OpenWARequestOptions) => Promise<OpenWAResponse<T>>;
-  checkDockerHealth?: (options?: { baseUrl?: string; apiKey?: string }) => Promise<{
+  checkDockerHealth?: (options?: { baseUrl?: string }) => Promise<{
     success: boolean;
     diagnostic: ElectronDockerDiagnostic;
   }>;
   checkUpdate?: () => Promise<ElectronUpdateInfo>;
   installLaunchAgent?: () => Promise<{ success: boolean; plistPath?: string; error?: string }>;
   getLaunchAgentStatus?: () => Promise<{ isInstalled: boolean; plistPath?: string }>;
-  secureStorage?: ElectronSecureStorage;
+  credentials?: ElectronCredentialsAPI;
+  metaCloud?: ElectronMetaCloudAPI;
 }
 
 declare global {
