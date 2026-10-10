@@ -114,7 +114,17 @@ class DispatchRepository {
     }
 
     if (!this.SQL) {
-      this.SQL = await initSqlJs();
+      let sqlOptions = {};
+      try {
+        const wasmPath = path.join(path.dirname(require.resolve('sql.js')), 'sql-wasm.wasm');
+        if (fs.existsSync(wasmPath)) {
+          const wasmBinary = fs.readFileSync(wasmPath);
+          sqlOptions = { wasmBinary };
+        }
+      } catch {
+        // Fallback to default initSqlJs loader
+      }
+      this.SQL = await initSqlJs(sqlOptions);
     }
 
     if (fs.existsSync(dbPath)) {
@@ -189,6 +199,8 @@ class DispatchRepository {
 
   /**
    * Flushes in-memory SQLite state to disk atomically.
+   * If writing to temporary file or rename fails, cleans up the temporary file,
+   * preserves the original valid database on disk, and throws the error.
    */
   saveToDisk() {
     if (!this.db) return;
@@ -196,9 +208,20 @@ class DispatchRepository {
     const data = this.db.export();
     const buffer = Buffer.from(data);
 
-    const tempPath = `${dbPath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
-    fs.writeFileSync(tempPath, buffer);
-    fs.renameSync(tempPath, dbPath);
+    const tempPath = `${dbPath}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
+    try {
+      fs.writeFileSync(tempPath, buffer);
+      fs.renameSync(tempPath, dbPath);
+    } catch (err) {
+      if (fs.existsSync(tempPath)) {
+        try {
+          fs.unlinkSync(tempPath);
+        } catch {
+          // ignore secondary cleanup error
+        }
+      }
+      throw new Error(`DispatchRepository: Diske yazma hatası (${dbPath}): ${err.message || String(err)}`);
+    }
   }
 
   /**

@@ -292,4 +292,165 @@ describe('Vatsap V2 — P0-3B.1: Main Process SQLite Foundation Test Suite', () 
     expect(preloadSource).not.toContain('sqlite');
     expect(preloadSource).not.toContain('better-sqlite3');
   });
+
+  // -------------------------------------------------------------------------
+  // Test 10: updateDispatchStatus sonrası değişiklik derhal diske yazılır ve yeniden açılışta korunur
+  // -------------------------------------------------------------------------
+  it('Test 10: updateDispatchStatus sonrası değişiklik derhal diske yazılır ve repo yeniden açıldığında korunur', async () => {
+    await repo.init();
+
+    repo.createDispatch({
+      id: 'disp_update_1',
+      dispatch_key: 'key_update_test',
+      student_id: 'std_upd',
+      student_name: 'Zeynep Çelik',
+      phone: '905364445566',
+      exam_name: 'Deneme 2',
+      pdf_name: 'Zeynep.pdf',
+      pdf_sha256: 'sha_zeynep_123',
+      provider: 'openwa',
+      status: 'pending',
+    });
+
+    // Durumu güncelle
+    repo.updateDispatchStatus('key_update_test', 'sent', {
+      provider_message_id: 'wamid_123456789',
+      retry_count: 2,
+      last_error: 'İlk deneme gecikti',
+    });
+
+    // Repository'yi kapatıp yeni örnekle aç
+    repo.close();
+
+    const secondRepo = new DispatchRepository({
+      storageDir: tempDir,
+      dbFileName: 'karne_v2_test.db',
+    });
+    await secondRepo.init();
+
+    const reloaded = secondRepo.getDispatchByKey('key_update_test');
+    expect(reloaded).not.toBeNull();
+    expect(reloaded.status).toBe('sent');
+    expect(reloaded.provider_message_id).toBe('wamid_123456789');
+    expect(reloaded.retry_count).toBe(2);
+    expect(reloaded.last_error).toBe('İlk deneme gecikti');
+
+    secondRepo.close();
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 11: Yazma hatasında önceki geçerli veritabanı korunur
+  // -------------------------------------------------------------------------
+  it('Test 11: saveToDisk hatası oluştuğunda önceki geçerli veritabanı korunur ve geçici dosya temizlenir', async () => {
+    await repo.init();
+
+    repo.createDispatch({
+      id: 'disp_safe_1',
+      dispatch_key: 'key_safe_test',
+      student_id: 'std_safe',
+      student_name: 'Mehmet Kaya',
+      phone: '905353334455',
+      exam_name: 'Deneme 1',
+      pdf_name: 'Mehmet.pdf',
+      pdf_sha256: 'hash_safe',
+      provider: 'meta_cloud',
+      status: 'sent',
+    });
+
+    const dbPath = repo.getDbPath();
+    const originalContent = fs.readFileSync(dbPath);
+
+    // saveToDisk sırasında writeFileSync metodunun hata fırlattığını simüle et
+    const originalWriteFileSync = fs.writeFileSync;
+    let writeAttempts = 0;
+
+    try {
+      fs.writeFileSync = ((targetPath: fs.PathOrFileDescriptor, data: any, options: any) => {
+        if (typeof targetPath === 'string' && targetPath.includes('.tmp.')) {
+          writeAttempts++;
+          throw new Error('Simüle edilmiş disk yazma / kota hatası (ENOSPC)');
+        }
+        return originalWriteFileSync(targetPath as any, data, options);
+      }) as typeof fs.writeFileSync;
+
+      // Hatanın çağırana fırlatıldığını doğrula
+      expect(() => {
+        repo.updateDispatchStatus('key_safe_test', 'delivered');
+      }).toThrow(/Diske yazma hatası/);
+
+      expect(writeAttempts).toBeGreaterThan(0);
+    } finally {
+      fs.writeFileSync = originalWriteFileSync;
+    }
+
+    // Orijinal veritabanı dosyasının bozulmadığını ve önceki halinin korunduğunu doğrula
+    const currentContent = fs.readFileSync(dbPath);
+    expect(Buffer.compare(originalContent, currentContent)).toBe(0);
+
+    // Dizinde sahte geçici .tmp dosyası kalmadığını doğrula
+    const files = fs.readdirSync(tempDir);
+    const tmpFiles = files.filter((f) => f.includes('.tmp.'));
+    expect(tmpFiles.length).toBe(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 12: Ardışık birden fazla yazma çağrısında veri kaybı veya dosya bozulması yaşanmaz
+  // -------------------------------------------------------------------------
+  it('Test 12: Çok sayıda ardışık yazma ve güncelleme çağrısında dosya bozulmaz ve tüm kayıtlar eksiksiz saklanır', async () => {
+    await repo.init();
+
+    const RECORD_COUNT = 15;
+    for (let i = 0; i < RECORD_COUNT; i++) {
+      repo.createDispatch({
+        id: `disp_bulk_${i}`,
+        dispatch_key: `key_bulk_${i}`,
+        student_id: `std_bulk_${i}`,
+        student_name: `Öğrenci ${i}`,
+        phone: `9053211122${String(i).padStart(2, '0')}`,
+        exam_name: 'Toplu Deneme',
+        pdf_name: `Ogrenci_${i}.pdf`,
+        pdf_sha256: `sha_${i}`,
+        provider: 'openwa',
+        status: 'pending',
+      });
+
+      // Hemen ardından güncelleme yap
+      repo.updateDispatchStatus(`key_bulk_${i}`, i % 2 === 0 ? 'sent' : 'failed', {
+        retry_count: i % 3,
+      });
+    }
+
+    expect(repo.countDispatches()).toBe(RECORD_COUNT);
+
+    // Kapat ve baştan oku
+    repo.close();
+
+    const reloadRepo = new DispatchRepository({
+      storageDir: tempDir,
+      dbFileName: 'karne_v2_test.db',
+    });
+    await reloadRepo.init();
+
+    expect(reloadRepo.countDispatches()).toBe(RECORD_COUNT);
+    const examList = reloadRepo.getDispatchesByExam('Toplu Deneme');
+    expect(examList.length).toBe(RECORD_COUNT);
+
+    for (let i = 0; i < RECORD_COUNT; i++) {
+      const item = reloadRepo.getDispatchByKey(`key_bulk_${i}`);
+      expect(item).not.toBeNull();
+      expect(item.status).toBe(i % 2 === 0 ? 'sent' : 'failed');
+      expect(item.retry_count).toBe(i % 3);
+    }
+
+    reloadRepo.close();
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 13: sql.js WASM ikili dosyasının yolu ve çözünürlüğü doğrulanır
+  // -------------------------------------------------------------------------
+  it('Test 13: sql.js paketinin sql-wasm.wasm dosyası require.resolve ile deterministik olarak mevcuttur', () => {
+    const wasmPath = path.join(path.dirname(require.resolve('sql.js')), 'sql-wasm.wasm');
+    expect(fs.existsSync(wasmPath)).toBe(true);
+    expect(fs.statSync(wasmPath).size).toBeGreaterThan(100000); // ~658 KB
+  });
 });
