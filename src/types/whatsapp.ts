@@ -21,7 +21,7 @@ export interface WhatsAppStatus {
   httpStatus?: number;
 }
 
-export type SendOutcome = 'success' | 'partial_success' | 'failed' | 'cancelled' | 'retrying';
+export type SendOutcome = 'success' | 'partial_success' | 'failed' | 'cancelled' | 'retrying' | 'unknown';
 
 export interface SendResult {
   success: boolean;

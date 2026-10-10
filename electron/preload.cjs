@@ -24,4 +24,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     sendMessage: (options) => ipcRenderer.invoke('meta:sendMessage', options),
     sendDocument: (options) => ipcRenderer.invoke('meta:sendDocument', options),
   },
+  dispatch: {
+    reserve: (params, options) => ipcRenderer.invoke('dispatch:reserve', params, options),
+    createUnknownRetryToken: (dispatchKey) =>
+      ipcRenderer.invoke('dispatch:createUnknownRetryToken', dispatchKey),
+    updateStatus: (dispatchKey, status, extra) =>
+      ipcRenderer.invoke('dispatch:updateStatus', { dispatchKey, status, extra }),
+    getByKey: (dispatchKey) => ipcRenderer.invoke('dispatch:getByKey', dispatchKey),
+    getByExam: (examName) => ipcRenderer.invoke('dispatch:getByExam', examName),
+    getByStatus: (status) => ipcRenderer.invoke('dispatch:getByStatus', status),
+    computeKey: (payload) => ipcRenderer.invoke('dispatch:computeKey', payload),
+  },
 });

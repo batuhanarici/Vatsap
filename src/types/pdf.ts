@@ -24,7 +24,8 @@ export type SendingStatus =
   | 'success' 
   | 'partial_success'
   | 'failed'
-  | 'cancelled';
+  | 'cancelled'
+  | 'unknown';
 
 export type MatchingMethod = 'filename' | 'text_extraction' | 'content_ocr' | 'manual';
 

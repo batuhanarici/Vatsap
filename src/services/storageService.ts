@@ -582,6 +582,7 @@ export const storageService = {
 
   getHistory(): HistoryItem[] {
     try {
+      if (typeof localStorage === 'undefined') return [];
       const data = localStorage.getItem(HISTORY_STORAGE_KEY);
       if (data) {
         return JSON.parse(data);
@@ -593,9 +594,14 @@ export const storageService = {
   },
 
   addHistoryItem(item: HistoryItem): void {
-    const history = this.getHistory();
-    const updated = [item, ...history];
-    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(updated.slice(0, 100))); // Keep last 100
+    if (typeof localStorage === 'undefined') return;
+    try {
+      const history = this.getHistory();
+      const updated = [item, ...history];
+      localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(updated.slice(0, 100))); // Keep last 100
+    } catch {
+      // Ignore
+    }
   },
 
   clearHistory(): void {

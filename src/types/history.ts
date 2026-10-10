@@ -9,7 +9,7 @@ export interface HistoryItem {
   phone?: string;
   pdfFileName: string;
   date: string; // ISO string e.g. 2026-10-02T18:30:00
-  status: 'success' | 'failed' | 'partial_success' | 'cancelled';
+  status: 'success' | 'failed' | 'partial_success' | 'cancelled' | 'unknown';
   outcome?: SendOutcome;
   pdfSent?: boolean;
   messageSent?: boolean;

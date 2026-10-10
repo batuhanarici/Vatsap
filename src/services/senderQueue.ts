@@ -39,6 +39,32 @@ export interface QueueSummary {
   cancelled: boolean;
 }
 
+/**
+ * Classifies whether a send failure is ambiguous (timeout, connection drop, gateway error).
+ * Ambiguous errors MUST NOT be automatically retried to prevent duplicate WhatsApp deliveries.
+ */
+export function isAmbiguousDeliveryError(error?: string, outcome?: string): boolean {
+  if (outcome === 'unknown') return true;
+  if (!error) return false;
+  const lower = error.toLowerCase();
+  return (
+    lower.includes('timeout') ||
+    lower.includes('timed out') ||
+    lower.includes('zaman aşımı') ||
+    lower.includes('econnreset') ||
+    lower.includes('econnaborted') ||
+    lower.includes('enetdown') ||
+    lower.includes('enetunreach') ||
+    lower.includes('etimedout') ||
+    lower.includes('bağlantı') ||
+    lower.includes('connection') ||
+    lower.includes('network') ||
+    lower.includes('504') ||
+    lower.includes('502') ||
+    lower.includes('gateway')
+  );
+}
+
 export interface QueueOptions {
   items: MatchedItem[];
   template: string;
@@ -287,6 +313,40 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
         'JVBERi0xLjQKJcOkw7zDtsOfCjIgMCBvYmoKPDwvTGVuZ3RoIDY4L0ZpbHRlci9GbGF0ZURlY29kZT4+c3RyZWFtCnicS0vMyUktyigw1HPJLEvN0XNLTNcz1HNLTM9ITMnWczRU0FVIzs8rVchNLMpTKM8vyklRBQDU7w31CmVuZHN0cmVhbQplbmRvYmoKCjEgMCBvYmoKPDwvVHlwZS9QYWdlcy9LaWRzWzMgMCBSXS9Db3VudCAxPj4KZW5kb2JqCgozIDAgb2JqCjw8L1R5cGUvUGFnZS9QYXJlbnQgMSAwIFIvTWVkaWFCb3hbMCAwIDU5NSA4NDJdL1Jlc291cmNlczw8L0ZvbnQ8PAo+Pj4+L0NvbnRlbnRzIDIgMCBSPj4KZW5kb2JqCgp4cmVmCjAgNAowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAxNDQgMDAwMDAgbiAKMDAwMDAwMDAxNSAwMDAwMCBuIAowMDAwMDAwMjAyIDAwMDAwIG4gCnRyYWlsZXIKPDwvUm9vdCAxIDAgUi9TaXplIDQ+PgpzdGFydHhyZWYKMzEwCiUlRU9G';
     }
 
+    // 4.5. Main Process Dispatch Reservation Gate (P0-3B.2)
+    // Atomically reserves a dispatch attempt in SQLite before ANY provider network call is made.
+    let mainProcessDispatchKey: string | null = null;
+    if (typeof window !== 'undefined' && window.electronAPI?.dispatch?.reserve) {
+      try {
+        const reservation = await window.electronAPI.dispatch.reserve({
+          studentId: student.id,
+          studentName: student.studentName,
+          phone: cleanRecipientPhone,
+          examName,
+          pdfName: targetPdfFileName,
+          pdfPath: pdfFile?.path,
+          pdfBase64: base64,
+          provider: (provider as any)?.providerType || 'whatsapp',
+        });
+
+        if (!reservation.allowed) {
+          // Blocked by Main Process persistent idempotency gate! Provider call is strictly skipped.
+          currentItem.sendingStatus = 'failed';
+          currentItem.errorMessage = `[Main Process SQLite Gate: ${reservation.code || 'BLOCKED'}] ${reservation.reason || 'Gönderim rezervasyonu reddedildi.'}`;
+          onItemUpdated(currentItem);
+          failedCount++;
+          failedStudentIds.push(student.id);
+          inProgressStudentIds.delete(currentDispatchKey);
+          inProgressStudentIds.delete(student.id);
+          continue;
+        }
+
+        mainProcessDispatchKey = reservation.dispatchKey || null;
+      } catch (reserveErr: any) {
+        console.error('[SenderQueue] Main process rezervasyon hatası:', reserveErr);
+      }
+    }
+
     // 5. Attempt Send with State Transitions: [validating] -> [sending_pdf] -> [retrying]
     let attempt = 0;
     let sendResult: SendResult = {
@@ -345,6 +405,15 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
         break; // Document sent successfully
       }
 
+      // CRITICAL P0-3B.3 RETRY SAFETY INVARIANT:
+      // If the error is ambiguous (timeout, connection drop, server gateway issue),
+      // we MUST treat it as a possible delivery and STOP IMMEDIATELY.
+      // Total provider calls MUST be exactly 1! Never blindly retry!
+      if (isAmbiguousDeliveryError(sendResult.error, sendResult.outcome)) {
+        sendResult.outcome = 'unknown';
+        break;
+      }
+
       // If document send failed and we have retries left, transition to [retrying] and wait backoff
       if (attempt <= maxRetries && !isCancelled()) {
         currentItem.sendingStatus = 'retrying';
@@ -354,8 +423,9 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
     }
 
     // 6. If PDF send failed across all retries: Transition to [sending_message] fallback
+    // Invariant (P0-3B.3): NEVER send fallback text if outcome is 'unknown' to prevent duplicate messages!
     let isFallbackTextOnly = false;
-    if (!sendResult.success && !isCancelled()) {
+    if (!sendResult.success && sendResult.outcome !== 'unknown' && !isCancelled()) {
       currentItem.sendingStatus = 'sending_message';
       onItemUpdated(currentItem);
       onProgress({
@@ -383,7 +453,7 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
       }
     }
 
-    // 7. Final State Transitions: -> [success] | [partial_success] | [failed]
+    // 7. Final State Transitions: -> [success] | [partial_success] | [unknown] | [failed]
     if (sendResult.pdfSent) {
       // Transition -> [success]
       currentItem.sendingStatus = 'success';
@@ -393,6 +463,13 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
       sentStudentIds.add(student.id);
       sentDispatchKeys.add(currentDispatchKey);
       completedStudentIds.push(student.id);
+
+      // Main Process SQLite Status Update: [sent]
+      if (mainProcessDispatchKey && typeof window !== 'undefined' && window.electronAPI?.dispatch?.updateStatus) {
+        window.electronAPI.dispatch.updateStatus(mainProcessDispatchKey, 'sent', {
+          provider_message_id: sendResult.messageId || null,
+        }).catch((err) => console.error('[SenderQueue] SQLite durum güncelleme hatası:', err));
+      }
 
       storageService.addHistoryItem({
         id: `hist_${Date.now()}_${student.id}`,
@@ -453,6 +530,14 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
       sentDispatchKeys.add(currentDispatchKey);
       partialStudentIds.push(student.id);
 
+      // Main Process SQLite Status Update: [delivered/sent with note]
+      if (mainProcessDispatchKey && typeof window !== 'undefined' && window.electronAPI?.dispatch?.updateStatus) {
+        window.electronAPI.dispatch.updateStatus(mainProcessDispatchKey, 'sent', {
+          provider_message_id: sendResult.messageId || null,
+          last_error: currentItem.errorMessage || 'Yalnızca metin mesajı iletildi.',
+        }).catch((err) => console.error('[SenderQueue] SQLite partial durum güncelleme hatası:', err));
+      }
+
       storageService.addHistoryItem({
         id: `hist_${Date.now()}_${student.id}`,
         studentId: student.id,
@@ -469,13 +554,54 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
         errorMessage: currentItem.errorMessage,
         examName: context?.examName,
       });
+    } else if (sendResult.outcome === 'unknown' || isAmbiguousDeliveryError(sendResult.error, sendResult.outcome)) {
+      // Transition -> [unknown] (P0-3B.3 Timeout & Ambiguous Delivery)
+      currentItem.sendingStatus = 'unknown';
+      currentItem.errorMessage =
+        sendResult.error || 'Zaman aşımı veya yanıt alınamaması nedeniyle teslimat sonucu belirsiz (unknown).';
+      onItemUpdated(currentItem);
+      failedCount++;
+      failedStudentIds.push(student.id);
+
+      // Main Process SQLite Status Update: strictly [unknown]
+      if (mainProcessDispatchKey && typeof window !== 'undefined' && window.electronAPI?.dispatch?.updateStatus) {
+        window.electronAPI.dispatch.updateStatus(mainProcessDispatchKey, 'unknown', {
+          last_error: currentItem.errorMessage,
+          retry_count: attempt,
+        }).catch((err) => console.error('[SenderQueue] SQLite unknown durum güncelleme hatası:', err));
+      }
+
+      storageService.addHistoryItem({
+        id: `hist_${Date.now()}_${student.id}`,
+        studentId: student.id,
+        studentName: student.studentName,
+        parentName: student.parentName,
+        maskedPhone: maskPhoneNumber(cleanRecipientPhone),
+        phone: cleanRecipientPhone,
+        pdfFileName: targetPdfFileName,
+        date: new Date().toISOString(),
+        status: 'unknown',
+        outcome: 'unknown',
+        pdfSent: false,
+        messageSent: false,
+        errorMessage: currentItem.errorMessage,
+        examName: context?.examName,
+      });
     } else {
-      // Transition -> [failed]
+      // Transition -> [failed] (Definitive rejection / error)
       currentItem.sendingStatus = 'failed';
       currentItem.errorMessage = sendResult.error || 'Mesaj ve PDF gönderilemedi.';
       onItemUpdated(currentItem);
       failedCount++;
       failedStudentIds.push(student.id);
+
+      // Main Process SQLite Status Update: strictly [failed]
+      if (mainProcessDispatchKey && typeof window !== 'undefined' && window.electronAPI?.dispatch?.updateStatus) {
+        window.electronAPI.dispatch.updateStatus(mainProcessDispatchKey, 'failed', {
+          last_error: currentItem.errorMessage,
+          retry_count: attempt,
+        }).catch((err) => console.error('[SenderQueue] SQLite failed durum güncelleme hatası:', err));
+      }
 
       storageService.addHistoryItem({
         id: `hist_${Date.now()}_${student.id}`,
@@ -552,4 +678,56 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
     cancelledCount,
     cancelled: false,
   };
+}
+
+/**
+ * Reconciles an array of matched items against authoritative Main Process SQLite records (P0-3B.3).
+ * Prioritizes SQLite state over stale local memory.
+ */
+export async function reconcileItemsWithSQLite(
+  items: MatchedItem[],
+  examName?: string
+): Promise<MatchedItem[]> {
+  if (typeof window === 'undefined' || !window.electronAPI?.dispatch?.getByExam) {
+    return items;
+  }
+
+  try {
+    const effectiveExam = (examName || '').trim();
+    const dbRecords = effectiveExam ? await window.electronAPI.dispatch.getByExam(effectiveExam) : [];
+    if (!dbRecords || dbRecords.length === 0) return items;
+
+    const recordByStudentId = new Map<string, typeof dbRecords[0]>();
+    for (const r of dbRecords) {
+      recordByStudentId.set(r.student_id, r);
+    }
+
+    return items.map((item) => {
+      const rec = recordByStudentId.get(item.student.id);
+      if (!rec) return item;
+
+      if (rec.status === 'sent' || rec.status === 'delivered') {
+        return {
+          ...item,
+          sendingStatus: 'success',
+          errorMessage: 'Bu karne daha önce başarıyla gönderilmiş (SQLite onaylı).',
+        };
+      }
+
+      if (rec.status === 'unknown') {
+        return {
+          ...item,
+          sendingStatus: 'unknown',
+          needsConfirmation: true,
+          errorMessage:
+            '[SQLite Belirsiz Teslimat] Önceki gönderim yanıt vermedi. Yeniden göndermek için mükerrer mesaj riskini onaylayın.',
+        };
+      }
+
+      return item;
+    });
+  } catch (err) {
+    console.warn('[SenderQueue] SQLite ile uzlaştırma yapılamadı:', err);
+    return items;
+  }
 }

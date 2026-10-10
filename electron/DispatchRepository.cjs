@@ -1,6 +1,78 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const initSqlJs = require('sql.js');
+
+/**
+ * Normalizes phone numbers to standard format (digits only, e.g. 905321112233).
+ */
+function normalizeRecipientPhone(phone) {
+  if (!phone || typeof phone !== 'string') return '';
+  let cleaned = phone.replace(/\D/g, '');
+  if (cleaned.startsWith('0090')) {
+    cleaned = cleaned.slice(2);
+  } else if (cleaned.startsWith('05')) {
+    cleaned = '9' + cleaned;
+  } else if (cleaned.startsWith('5') && cleaned.length === 10) {
+    cleaned = '90' + cleaned;
+  }
+  return cleaned;
+}
+
+/**
+ * Computes SHA-256 hash from Buffer or string.
+ */
+function computeSha256(data) {
+  if (Buffer.isBuffer(data)) {
+    return crypto.createHash('sha256').update(data).digest('hex');
+  }
+  if (typeof data === 'string') {
+    return crypto.createHash('sha256').update(data, 'utf8').digest('hex');
+  }
+  throw new Error('computeSha256: Veri Buffer veya string olmalıdır.');
+}
+
+/**
+ * Computes deterministic SHA-256 dispatch_key from normalized identity fields.
+ * Canonical representation uses versioned JSON with alphabetically sorted keys:
+ * {
+ *   examName: string,
+ *   pdfSha256: string (lowercase 64-char hex),
+ *   phone: string (normalized digits, e.g. 905321112233),
+ *   studentId: string,
+ *   v: 1
+ * }
+ */
+function computeDeterministicDispatchKey({ studentId, examName, phone, pdfSha256 }) {
+  if (!studentId || typeof studentId !== 'string') {
+    throw new Error('computeDeterministicDispatchKey: studentId alanı zorunludur.');
+  }
+  if (!examName || typeof examName !== 'string') {
+    throw new Error('computeDeterministicDispatchKey: examName alanı zorunludur.');
+  }
+  if (!phone || typeof phone !== 'string') {
+    throw new Error('computeDeterministicDispatchKey: phone alanı zorunludur.');
+  }
+  if (!pdfSha256 || typeof pdfSha256 !== 'string') {
+    throw new Error('computeDeterministicDispatchKey: pdfSha256 alanı zorunludur.');
+  }
+
+  const normalizedPhone = normalizeRecipientPhone(phone);
+  const normalizedExam = examName.trim();
+  const normalizedStudentId = studentId.trim();
+  const normalizedPdfSha256 = pdfSha256.trim().toLowerCase();
+
+  const canonicalObj = {
+    examName: normalizedExam,
+    pdfSha256: normalizedPdfSha256,
+    phone: normalizedPhone,
+    studentId: normalizedStudentId,
+    v: 1,
+  };
+
+  const canonicalJson = JSON.stringify(canonicalObj);
+  return crypto.createHash('sha256').update(canonicalJson, 'utf8').digest('hex');
+}
 
 /**
  * Valid delivery states defined in V2 Architecture (P0-3B).
@@ -13,6 +85,19 @@ const ALLOWED_DISPATCH_STATUSES = new Set([
   'failed',
   'unknown',
 ]);
+
+/**
+ * Valid state transitions for Vatsap V2 (P0-3B.3)
+ * Enforces unidirectional progression and prevents unauthorized regression.
+ */
+const VALID_STATE_TRANSITIONS = {
+  pending: new Set(['pending', 'sending', 'sent', 'failed']),
+  sending: new Set(['sending', 'sent', 'failed', 'unknown']),
+  sent: new Set(['sent', 'delivered']),
+  delivered: new Set(['delivered']),
+  failed: new Set(['failed', 'sending']),
+  unknown: new Set(['unknown', 'sending']),
+};
 
 /**
  * Migration definitions for Karne Gönderici SQLite database.
@@ -76,6 +161,7 @@ class DispatchRepository {
     this.db = null;
     this.SQL = null;
     this.isLoaded = false;
+    this.unknownRetryTokens = new Map();
   }
 
   setStorageDir(dirPath) {
@@ -140,10 +226,13 @@ class DispatchRepository {
     // Run schema migrations
     this.runMigrations();
 
+    this.isLoaded = true;
+
+    // Reconcile orphaned 'sending' dispatches from crash or unclean shutdown (P0-3B.3)
+    this.reconcileStartupState();
+
     // Persist initial schema to disk
     this.saveToDisk();
-
-    this.isLoaded = true;
   }
 
   /**
@@ -242,6 +331,100 @@ class DispatchRepository {
       this.db = null;
       this.isLoaded = false;
     }
+  }
+
+  /**
+   * Reconciles orphaned 'sending' dispatches from previous crash / unclean shutdown (P0-3B.3).
+   * Since the state cannot be proven, any dispatch left in 'sending' state upon startup
+   * is safely converted to 'unknown'. It will NOT be automatically retried.
+   */
+  reconcileStartupState() {
+    if (!this.db) {
+      throw new Error('DispatchRepository: Veritabanı başlatılmadan reconcile yapılamaz.');
+    }
+    const stmt = this.db.prepare("SELECT COUNT(*) as count FROM dispatches WHERE status = 'sending';");
+    let orphanCount = 0;
+    try {
+      if (stmt.step()) {
+        orphanCount = Number(stmt.getAsObject().count || 0);
+      }
+    } finally {
+      stmt.free();
+    }
+
+    if (orphanCount > 0) {
+      const updatedAt = new Date().toISOString();
+      this.db.run(
+        `
+        UPDATE dispatches
+        SET status = 'unknown',
+            last_error = 'Uygulama önceki oturumda beklenmedik şekilde kapandı; gönderim durumu belirsiz (unknown) olarak uzlaştırıldı.',
+            updated_at = ?
+        WHERE status = 'sending';
+        `,
+        [updatedAt]
+      );
+      this.saveToDisk();
+      console.log(`[DispatchRepository] ${orphanCount} adet sahipsiz (orphaned) 'sending' kaydı 'unknown' olarak uzlaştırıldı.`);
+    }
+    return orphanCount;
+  }
+
+  /**
+   * Creates a cryptographically secure, single-use, time-limited authorization token
+   * for retrying an 'unknown' dispatch (P0-3B.3).
+   * Token is bound to the specific dispatchKey and expires in 5 minutes.
+   */
+  createUnknownRetryToken(dispatchKey) {
+    this.assertInitialized();
+    if (!dispatchKey || typeof dispatchKey !== 'string') {
+      throw new Error('createUnknownRetryToken: dispatchKey zorunludur.');
+    }
+    const record = this.getDispatchByKey(dispatchKey);
+    if (!record) {
+      throw new Error(`createUnknownRetryToken: dispatch_key "${dispatchKey}" bulunamadı.`);
+    }
+    if (record.status !== 'unknown') {
+      throw new Error(
+        `createUnknownRetryToken: Yalnızca 'unknown' durumundaki kayıtlar için onay belirteci üretilebilir. Mevcut durum: "${record.status}".`
+      );
+    }
+
+    const token = crypto.randomBytes(24).toString('hex');
+    const expiresAt = Date.now() + 5 * 60 * 1000; // 5 dakika geçerli
+    this.unknownRetryTokens.set(token, {
+      dispatchKey,
+      expiresAt,
+    });
+
+    return {
+      token,
+      expiresAt,
+      dispatchKey,
+      warning:
+        'DİKKAT: Önceki gönderim WhatsApp sunucularına ulaşmış ve veliye iletilmiş olabilir. Yeniden gönderim yapıldığında veliye aynı karnenin mükerrer (çift) olarak gitmesi riski kabul edilmiş sayılır.',
+    };
+  }
+
+  /**
+   * Verifies and consumes a single-use authorization token for 'unknown' retry (P0-3B.3).
+   */
+  verifyAndConsumeUnknownRetryToken(token, dispatchKey) {
+    if (!token || typeof token !== 'string') return false;
+    const entry = this.unknownRetryTokens.get(token);
+    if (!entry) return false;
+
+    // Single use: Immediately delete token from memory
+    this.unknownRetryTokens.delete(token);
+
+    if (entry.expiresAt < Date.now()) {
+      return false; // Expired
+    }
+    if (entry.dispatchKey !== dispatchKey) {
+      return false; // Mismatched dispatchKey
+    }
+
+    return true;
   }
 
   // =========================================================================
@@ -406,6 +589,26 @@ class DispatchRepository {
       throw new Error(`DispatchRepository: dispatch_key "${dispatchKey}" bulunamadı.`);
     }
 
+    // State Transition Matrix Verification (P0-3B.3)
+    if (existing.status !== status) {
+      const allowedTargets = VALID_STATE_TRANSITIONS[existing.status];
+      if (!allowedTargets || !allowedTargets.has(status)) {
+        throw new Error(
+          `DispatchRepository: Geçersiz durum geçişi: "${existing.status}" -> "${status}". Bu geçişe izin verilmez.`
+        );
+      }
+    }
+
+    // Delivery Proof Invariant (P0-3B.3)
+    if (status === 'delivered' && extra && extra.requireDeliveryProof) {
+      const proof = extra.delivery_proof || extra.provider_message_id || existing.provider_message_id;
+      if (!proof) {
+        throw new Error(
+          'DispatchRepository: "delivered" durumu için doğrulanmış teslimat kanıtı veya mesaj kimliği zorunludur.'
+        );
+      }
+    }
+
     const updatedAt = new Date().toISOString();
     const providerMessageId = extra.provider_message_id !== undefined ? extra.provider_message_id : existing.provider_message_id;
     const retryCount = extra.retry_count !== undefined ? extra.retry_count : existing.retry_count;
@@ -504,6 +707,158 @@ class DispatchRepository {
     return 0;
   }
 
+  /**
+   * Main Process Dispatch Reservation (P0-3B.2)
+   *
+   * Atomically reserves a dispatch attempt before any provider API call is made.
+   * Guarantees:
+   * 1. If dispatch is already 'sent' or 'delivered', blocks with ALREADY_SENT.
+   * 2. If dispatch is currently 'sending', blocks with IN_PROGRESS to prevent concurrent duplicate delivery.
+   * 3. If dispatch was 'unknown' delivery, blocks with UNKNOWN_DELIVERY unless explicitly overridden.
+   * 4. If dispatch was 'failed', permits retry (isRetry: true) and increments retry_count.
+   * 5. If new dispatch, creates record with status 'sending' and unique dispatch_key.
+   * 6. Handles race conditions with SQLite unique constraint error catching.
+   */
+  reserveDispatch(params, options = {}) {
+    this.assertInitialized();
+
+    const {
+      studentId,
+      studentName,
+      phone,
+      examName,
+      pdfName,
+      pdfSha256,
+      provider,
+      id,
+    } = params || {};
+
+    if (!studentId || typeof studentId !== 'string') {
+      throw new Error('DispatchRepository.reserveDispatch: studentId zorunludur.');
+    }
+    if (!studentName || typeof studentName !== 'string') {
+      throw new Error('DispatchRepository.reserveDispatch: studentName zorunludur.');
+    }
+    if (!phone || typeof phone !== 'string') {
+      throw new Error('DispatchRepository.reserveDispatch: phone zorunludur.');
+    }
+    if (!examName || typeof examName !== 'string') {
+      throw new Error('DispatchRepository.reserveDispatch: examName zorunludur.');
+    }
+    if (!pdfName || typeof pdfName !== 'string') {
+      throw new Error('DispatchRepository.reserveDispatch: pdfName zorunludur.');
+    }
+    if (!pdfSha256 || typeof pdfSha256 !== 'string') {
+      throw new Error('DispatchRepository.reserveDispatch: pdfSha256 zorunludur.');
+    }
+    if (!provider || typeof provider !== 'string') {
+      throw new Error('DispatchRepository.reserveDispatch: provider zorunludur.');
+    }
+
+    const dispatchKey = computeDeterministicDispatchKey({
+      studentId,
+      examName,
+      phone,
+      pdfSha256,
+    });
+
+    const existing = this.getDispatchByKey(dispatchKey);
+
+    if (existing) {
+      if (existing.status === 'sent' || existing.status === 'delivered') {
+        return {
+          allowed: false,
+          code: 'ALREADY_SENT',
+          reason: 'Bu öğrenci ve sınav için karne daha önce başarıyla gönderilmiş.',
+          dispatchKey,
+          existing,
+        };
+      }
+
+      if (existing.status === 'sending') {
+        return {
+          allowed: false,
+          code: 'IN_PROGRESS',
+          reason: 'Bu karne için gönderim şu anda aktif olarak işleniyor.',
+          dispatchKey,
+          existing,
+        };
+      }
+
+      if (existing.status === 'unknown') {
+        const { confirmationToken, allowUnknownRetry, isFromRenderer } = options || {};
+        const hasValidToken = confirmationToken && this.verifyAndConsumeUnknownRetryToken(confirmationToken, dispatchKey);
+        const isExplicitRepoOverride = Boolean(allowUnknownRetry && !isFromRenderer);
+
+        if (!hasValidToken && !isExplicitRepoOverride) {
+          return {
+            allowed: false,
+            code: 'UNKNOWN_DELIVERY',
+            reason: 'Önceki gönderim sonucu belirsiz (unknown). Mükerrer gönderimi önlemek için Main Process tek kullanımlık onay belirteci (confirmationToken) zorunludur.',
+            dispatchKey,
+            existing,
+          };
+        }
+      }
+
+      // If 'failed', 'pending', or explicitly allowed unknown retry:
+      const updated = this.updateDispatchStatus(dispatchKey, 'sending', {
+        retry_count: (existing.retry_count || 0) + 1,
+        last_error: null,
+      });
+
+      return {
+        allowed: true,
+        isRetry: true,
+        dispatchKey,
+        dispatch: updated,
+      };
+    }
+
+    // No existing record found: create fresh reservation
+    const recordId = id || `disp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const cleanPhone = normalizeRecipientPhone(phone);
+
+    try {
+      const created = this.createDispatch({
+        id: recordId,
+        dispatch_key: dispatchKey,
+        student_id: studentId.trim(),
+        student_name: studentName.trim(),
+        phone: cleanPhone,
+        exam_name: examName.trim(),
+        pdf_name: pdfName.trim(),
+        pdf_sha256: pdfSha256.trim().toLowerCase(),
+        provider: provider.trim(),
+        status: 'sending',
+        retry_count: 0,
+        last_error: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      return {
+        allowed: true,
+        isRetry: false,
+        dispatchKey,
+        dispatch: created,
+      };
+    } catch (err) {
+      if (err.message && err.message.includes('UNIQUE constraint failed')) {
+        const raceExisting = this.getDispatchByKey(dispatchKey);
+        const isSent = raceExisting && (raceExisting.status === 'sent' || raceExisting.status === 'delivered');
+        return {
+          allowed: false,
+          code: isSent ? 'ALREADY_SENT' : 'IN_PROGRESS',
+          reason: 'Eşzamanlı rezervasyon çakışması tespit edildi.',
+          dispatchKey,
+          existing: raceExisting,
+        };
+      }
+      throw err;
+    }
+  }
+
   assertInitialized() {
     if (!this.isInitialized()) {
       throw new Error(
@@ -516,5 +871,9 @@ class DispatchRepository {
 module.exports = {
   DispatchRepository,
   ALLOWED_DISPATCH_STATUSES,
+  VALID_STATE_TRANSITIONS,
   MIGRATIONS,
+  computeSha256,
+  computeDeterministicDispatchKey,
+  normalizeRecipientPhone,
 };
