@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     sendDocument: (options) => ipcRenderer.invoke('meta:sendDocument', options),
   },
   dispatch: {
+    send: (request) => ipcRenderer.invoke('dispatch:send', request),
     reserve: (params, options) => ipcRenderer.invoke('dispatch:reserve', params, options),
     createUnknownRetryToken: (dispatchKey) =>
       ipcRenderer.invoke('dispatch:createUnknownRetryToken', dispatchKey),

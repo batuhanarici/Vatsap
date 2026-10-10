@@ -313,8 +313,147 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
         'JVBERi0xLjQKJcOkw7zDtsOfCjIgMCBvYmoKPDwvTGVuZ3RoIDY4L0ZpbHRlci9GbGF0ZURlY29kZT4+c3RyZWFtCnicS0vMyUktyigw1HPJLEvN0XNLTNcz1HNLTM9ITMnWczRU0FVIzs8rVchNLMpTKM8vyklRBQDU7w31CmVuZHN0cmVhbQplbmRvYmoKCjEgMCBvYmoKPDwvVHlwZS9QYWdlcy9LaWRzWzMgMCBSXS9Db3VudCAxPj4KZW5kb2JqCgozIDAgb2JqCjw8L1R5cGUvUGFnZS9QYXJlbnQgMSAwIFIvTWVkaWFCb3hbMCAwIDU5NSA4NDJdL1Jlc291cmNlczw8L0ZvbnQ8PAo+Pj4+L0NvbnRlbnRzIDIgMCBSPj4KZW5kb2JqCgp4cmVmCjAgNAowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAxNDQgMDAwMDAgbiAKMDAwMDAwMDAxNSAwMDAwMCBuIAowMDAwMDAwMjAyIDAwMDAwIG4gCnRyYWlsZXIKPDwvUm9vdCAxIDAgUi9TaXplIDQ+PgpzdGFydHhyZWYKMzEwCiUlRU9G';
     }
 
-    // 4.5. Main Process Dispatch Reservation Gate (P0-3B.2)
-    // Atomically reserves a dispatch attempt in SQLite before ANY provider network call is made.
+    // 4.5. Main Process Authoritative Dispatch Execution (P0-3B.3.1)
+    // When running in Electron, Main Process is the authoritative owner of SQLite reservation,
+    // isolated credentials, WhatsApp network dispatch, and status transition.
+    if (typeof window !== 'undefined' && window.electronAPI?.dispatch?.send) {
+      try {
+        const sendRes = await window.electronAPI.dispatch.send({
+          studentId: student.id,
+          studentName: student.studentName,
+          phone: cleanRecipientPhone,
+          examName,
+          pdfName: targetPdfFileName,
+          pdfPath: pdfFile?.path,
+          pdfBase64: base64,
+          provider: (provider as any)?.providerType || 'whatsapp',
+          caption: targetPdfFileName,
+          messageText,
+          openwaConfig: (provider as any)?.config,
+          metaConfig: {
+            phoneNumberId: (provider as any)?.phoneNumberId || (provider as any)?.config?.metaPhoneNumberId,
+          },
+        });
+
+        if (!sendRes.allowed) {
+          // Blocked by SQLite reservation
+          currentItem.sendingStatus = 'failed';
+          currentItem.errorMessage = `[Main Process SQLite Gate: ${sendRes.code || 'BLOCKED'}] ${sendRes.reason || 'Gönderim rezervasyonu reddedildi.'}`;
+          onItemUpdated(currentItem);
+          failedCount++;
+          failedStudentIds.push(student.id);
+          inProgressStudentIds.delete(currentDispatchKey);
+          inProgressStudentIds.delete(student.id);
+          continue;
+        }
+
+        if (sendRes.success) {
+          currentItem.sendingStatus = 'success';
+          currentItem.errorMessage = undefined;
+          onItemUpdated(currentItem);
+          successCount++;
+          sentStudentIds.add(student.id);
+          sentDispatchKeys.add(currentDispatchKey);
+          completedStudentIds.push(student.id);
+
+          storageService.addHistoryItem({
+            id: `hist_${Date.now()}_${student.id}`,
+            studentId: student.id,
+            studentName: student.studentName,
+            parentName: student.parentName,
+            maskedPhone: maskPhoneNumber(cleanRecipientPhone),
+            phone: cleanRecipientPhone,
+            pdfFileName: targetPdfFileName,
+            date: new Date().toISOString(),
+            status: 'success',
+            outcome: 'success',
+            pdfSent: true,
+            messageSent: true,
+            examName: context?.examName,
+          });
+
+          // Optional 2nd parent delivery
+          if (sendToSecondaryParents && student.secondaryPhone && !isCancelled()) {
+            const cleanSecondaryPhone = normalizePhoneNumber(student.secondaryPhone);
+            if (cleanSecondaryPhone) {
+              try {
+                await sleep(1500);
+                await window.electronAPI.dispatch.send({
+                  studentId: `${student.id}_sec`,
+                  studentName: `${student.studentName} (2. Veli)`,
+                  phone: cleanSecondaryPhone,
+                  examName,
+                  pdfName: targetPdfFileName,
+                  pdfPath: pdfFile?.path,
+                  pdfBase64: base64,
+                  provider: (provider as any)?.providerType || 'whatsapp',
+                  caption: targetPdfFileName,
+                  messageText,
+                });
+              } catch (secErr) {
+                console.error('2. Veli gönderim hatası:', secErr);
+              }
+            }
+          }
+        } else if (sendRes.outcome === 'unknown') {
+          // UNKNOWN: STOP IMMEDIATELY! NO retry, NO text fallback, NO 2nd parent!
+          currentItem.sendingStatus = 'unknown';
+          currentItem.errorMessage = sendRes.error || 'Zaman aşımı veya yanıt alınamaması nedeniyle teslimat sonucu belirsiz (unknown).';
+          onItemUpdated(currentItem);
+          failedCount++;
+          failedStudentIds.push(student.id);
+
+          storageService.addHistoryItem({
+            id: `hist_${Date.now()}_${student.id}`,
+            studentId: student.id,
+            studentName: student.studentName,
+            parentName: student.parentName,
+            maskedPhone: maskPhoneNumber(cleanRecipientPhone),
+            phone: cleanRecipientPhone,
+            pdfFileName: targetPdfFileName,
+            date: new Date().toISOString(),
+            status: 'unknown',
+            outcome: 'unknown',
+            pdfSent: false,
+            messageSent: false,
+            errorMessage: currentItem.errorMessage,
+            examName: context?.examName,
+          });
+        } else {
+          // FAILED: Definitive rejection
+          currentItem.sendingStatus = 'failed';
+          currentItem.errorMessage = sendRes.error || 'Mesaj ve PDF gönderilemedi.';
+          onItemUpdated(currentItem);
+          failedCount++;
+          failedStudentIds.push(student.id);
+
+          storageService.addHistoryItem({
+            id: `hist_${Date.now()}_${student.id}`,
+            studentId: student.id,
+            studentName: student.studentName,
+            parentName: student.parentName,
+            maskedPhone: maskPhoneNumber(cleanRecipientPhone),
+            phone: cleanRecipientPhone,
+            pdfFileName: targetPdfFileName,
+            date: new Date().toISOString(),
+            status: 'failed',
+            outcome: 'failed',
+            pdfSent: false,
+            messageSent: false,
+            errorMessage: currentItem.errorMessage,
+            examName: context?.examName,
+          });
+        }
+
+        inProgressStudentIds.delete(currentDispatchKey);
+        inProgressStudentIds.delete(student.id);
+        continue;
+      } catch (ipcErr: any) {
+        console.error('[SenderQueue] Main process dispatch send hatası:', ipcErr);
+      }
+    }
+
+    // 4.6. Fallback / Test-Runner Reservation Gate (when window.electronAPI.dispatch.send is not mocked)
     let mainProcessDispatchKey: string | null = null;
     if (typeof window !== 'undefined' && window.electronAPI?.dispatch?.reserve) {
       try {
@@ -394,12 +533,23 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
         maxRetries,
       });
 
-      sendResult = await provider.sendDocument(
-        cleanRecipientPhone,
-        base64,
-        targetPdfFileName,
-        messageText
-      );
+      try {
+        sendResult = await provider.sendDocument(
+          cleanRecipientPhone,
+          base64,
+          targetPdfFileName,
+          messageText
+        );
+      } catch (err: any) {
+        // P0-B: Catch unhandled Promise rejections (ETIMEDOUT, ECONNRESET, abort, etc.)
+        sendResult = {
+          success: false,
+          outcome: 'unknown',
+          pdfSent: false,
+          messageSent: false,
+          error: err?.message || String(err),
+        };
+      }
 
       if (sendResult.success) {
         break; // Document sent successfully

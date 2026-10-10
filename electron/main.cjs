@@ -830,35 +830,367 @@ ipcMain.handle('dispatch:createUnknownRetryToken', async (_, dispatchKey) => {
   }
 });
 
-ipcMain.handle('dispatch:updateStatus', async (_, payload) => {
-  try {
-    const { dispatchKey, status, extra } = payload || {};
-    if (!dispatchKey || typeof dispatchKey !== 'string') {
-      throw new Error('dispatch:updateStatus: dispatchKey zorunludur.');
+// =============================================================================
+// Vatsap V2 — Main Process Authoritative Provider Execution (P0-3B.3.1)
+// =============================================================================
+
+function isAmbiguousError(errMsg) {
+  if (!errMsg || typeof errMsg !== 'string') return false;
+  const lower = errMsg.toLowerCase();
+  return (
+    lower.includes('timeout') ||
+    lower.includes('timed out') ||
+    lower.includes('zaman aşımı') ||
+    lower.includes('econnreset') ||
+    lower.includes('econnaborted') ||
+    lower.includes('enetdown') ||
+    lower.includes('enetunreach') ||
+    lower.includes('etimedout') ||
+    lower.includes('bağlantı') ||
+    lower.includes('connection') ||
+    lower.includes('network') ||
+    lower.includes('504') ||
+    lower.includes('502') ||
+    lower.includes('gateway')
+  );
+}
+
+async function sendMetaDocumentInternal({ phoneNumberId, metaToken, phone, pdfBuffer, fileName, caption }) {
+  const blob = new Blob([pdfBuffer], { type: 'application/pdf' });
+  const formData = new FormData();
+  formData.append('messaging_product', 'whatsapp');
+  formData.append('type', 'application/pdf');
+  formData.append('file', blob, fileName || 'karne.pdf');
+
+  const uploadRes = await fetch(
+    `https://graph.facebook.com/v21.0/${encodeURIComponent(phoneNumberId.trim())}/media`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${metaToken}`,
+      },
+      body: formData,
     }
-    // Main Process Security Invariant (P0-3B.3):
-    // Renderer cannot set status to 'sending' directly via updateStatus.
-    // 'sending' status can only be obtained through the atomic dispatch:reserve gateway.
-    if (status === 'sending') {
-      throw new Error(
-        'dispatch:updateStatus: "sending" durumu doğrudan ayarlanamaz; yalnızca dispatch:reserve üzerinden rezerve edilebilir.'
-      );
-    }
-    if (status === 'delivered') {
-      const existing = dispatchRepository.getDispatchByKey(dispatchKey);
-      const proof = extra?.delivery_proof || extra?.provider_message_id || existing?.provider_message_id;
-      if (!proof) {
-        throw new Error(
-          'dispatch:updateStatus: "delivered" durumu için doğrulanmış teslimat kanıtı (provider_message_id veya delivery_proof) zorunludur.'
-        );
-      }
-    }
-    const updated = dispatchRepository.updateDispatchStatus(dispatchKey, status, extra || {});
-    return { success: true, dispatch: updated };
-  } catch (err) {
-    console.error('[Electron] dispatch:updateStatus Hatası:', err.message);
-    return { success: false, error: err.message };
+  );
+
+  if (!uploadRes.ok) {
+    const errorData = await uploadRes.json().catch(() => null);
+    return {
+      success: false,
+      error: `Meta Cloud PDF yükleme hatası: ${errorData?.error?.message || uploadRes.statusText}`,
+    };
   }
+
+  const uploadJson = await uploadRes.json();
+  const mediaId = uploadJson?.id;
+  if (!mediaId) {
+    return {
+      success: false,
+      error: 'Meta Cloud API geçerli bir Media ID döndürmedi.',
+    };
+  }
+
+  const cleanPhone = phone.replace(/[^0-9]/g, '');
+  const docPayload = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to: cleanPhone,
+    type: 'document',
+    document: {
+      id: mediaId,
+      filename: fileName || 'karne.pdf',
+    },
+  };
+  if (caption && caption.trim()) {
+    docPayload.document.caption = caption.trim();
+  }
+
+  const sendRes = await fetch(
+    `https://graph.facebook.com/v21.0/${encodeURIComponent(phoneNumberId.trim())}/messages`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${metaToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(docPayload),
+    }
+  );
+
+  if (!sendRes.ok) {
+    const errorData = await sendRes.json().catch(() => null);
+    return {
+      success: false,
+      error: errorData?.error?.message || `Mesaj gönderilemedi (${sendRes.status})`,
+    };
+  }
+
+  const sendJson = await sendRes.json();
+  return {
+    success: true,
+    messageId: sendJson?.messages?.[0]?.id,
+  };
+}
+
+async function sendOpenWaDocumentInternal({ baseUrl, sessionId, phone, base64, fileName, caption }) {
+  const cleanPhone = phone.replace(/[^0-9]/g, '');
+  const cleanBase64 = (base64.startsWith('data:') ? base64.split(',')[1] : base64).trim().replace(/\s+/g, '');
+  const safeSession = (sessionId || 'default').trim();
+  const safeBaseUrl = (baseUrl || 'http://127.0.0.1:2785/api').replace(/\/+$/, '');
+  const url = `${safeBaseUrl}/sessions/${encodeURIComponent(safeSession)}/messages/send-document`;
+
+  const payload = {
+    chatId: `${cleanPhone}@c.us`,
+    base64: cleanBase64,
+    mimetype: 'application/pdf',
+    filename: fileName || 'karne.pdf',
+    caption: caption || fileName || 'karne.pdf',
+  };
+
+  const headers = {
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  };
+
+  const openWaApiKey = credentialService.getOpenWAKey();
+  if (openWaApiKey) {
+    headers['X-API-Key'] = openWaApiKey;
+    headers['api-key'] = openWaApiKey;
+  }
+
+  const controller = new AbortController();
+  const timeoutMs = 30000;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const errMsg = data?.message || data?.error || `OpenWA HTTP ${res.status}`;
+      return { success: false, error: errMsg };
+    }
+
+    const messageId = data?.messageId || data?.id || `msg_${Date.now()}`;
+    return { success: true, messageId };
+  } catch (err) {
+    clearTimeout(timer);
+    const isAbort = err.name === 'AbortError' || (err.message && err.message.includes('abort'));
+    const errorText = isAbort
+      ? `OpenWA sunucusu ${timeoutMs}ms içinde yanıt vermedi (Zaman aşımı / ETIMEDOUT).`
+      : `OpenWA bağlantı hatası: ${err.message || String(err)}`;
+    return { success: false, error: errorText };
+  }
+}
+
+ipcMain.handle('dispatch:send', async (_, request) => {
+  try {
+    if (!request || typeof request !== 'object') {
+      throw new Error('dispatch:send: İstek parametresi geçersiz.');
+    }
+
+    const {
+      studentId,
+      studentName,
+      phone,
+      examName,
+      pdfName,
+      pdfPath,
+      pdfBase64,
+      provider = 'openwa',
+      caption,
+      messageText,
+      confirmationToken,
+      openwaConfig,
+      metaConfig,
+    } = request;
+
+    if (!studentId || !studentName || !phone || !examName || !pdfName) {
+      throw new Error('dispatch:send: Eksik öğrenci veya sınav bilgisi.');
+    }
+
+    // 1. PDF Byte Hash & Size bounds check
+    let pdfSha256 = '';
+    let finalBase64 = pdfBase64 || '';
+    let finalBuffer = null;
+
+    if (pdfPath) {
+      const validation = validatePdfPath(pdfPath);
+      if (!validation.valid) {
+        console.warn(`[Security Alert] dispatch:send PDF erişimi engellendi: ${validation.error} (${pdfPath})`);
+        throw new Error(`Erişim Engellendi: ${validation.error}`);
+      }
+      const stats = fs.statSync(validation.canonicalPath);
+      if (stats.size > 25 * 1024 * 1024) {
+        throw new Error('PDF boyutu 25MB güvenlik sınırını aşıyor.');
+      }
+      finalBuffer = fs.readFileSync(validation.canonicalPath);
+      finalBase64 = finalBuffer.toString('base64');
+      pdfSha256 = computeSha256(finalBuffer);
+    } else if (pdfBase64 && typeof pdfBase64 === 'string') {
+      const approxBytes = Buffer.byteLength(pdfBase64, 'base64');
+      if (approxBytes > 25 * 1024 * 1024) {
+        throw new Error('PDF boyutu 25MB güvenlik sınırını aşıyor.');
+      }
+      finalBuffer = Buffer.from(pdfBase64, 'base64');
+      pdfSha256 = computeSha256(finalBuffer);
+    } else {
+      throw new Error('dispatch:send: PDF içeriği zorunludur.');
+    }
+
+    const cleanPhone = normalizeRecipientPhone(phone);
+    if (!cleanPhone || cleanPhone.length < 10) {
+      throw new Error('dispatch:send: Geçersiz alıcı telefon numarası.');
+    }
+
+    // 2. Atomic SQLite Reservation in Main Process
+    const reservation = dispatchRepository.reserveDispatch(
+      {
+        studentId,
+        studentName,
+        phone: cleanPhone,
+        examName,
+        pdfName,
+        pdfSha256,
+        provider,
+      },
+      {
+        confirmationToken: typeof confirmationToken === 'string' ? confirmationToken : undefined,
+        isFromRenderer: true,
+      }
+    );
+
+    if (!reservation.allowed) {
+      // Reservation blocked! Strict zero provider call guarantee!
+      return {
+        success: false,
+        allowed: false,
+        code: reservation.code,
+        reason: reservation.reason,
+        existing: reservation.existing,
+      };
+    }
+
+    const dispatchKey = reservation.dispatchKey;
+
+    // 3. Authoritative Provider Call inside Main Process
+    let providerResult = { success: false, error: '', messageId: null };
+
+    try {
+      if (provider === 'meta_cloud') {
+        const metaPhoneNumberId = metaConfig?.phoneNumberId;
+        const metaToken = credentialService.getMetaAccessToken();
+        if (!metaPhoneNumberId || !metaToken) {
+          throw new Error('Meta Cloud API kimlik bilgileri eksik.');
+        }
+
+        providerResult = await sendMetaDocumentInternal({
+          phoneNumberId: metaPhoneNumberId,
+          metaToken,
+          phone: cleanPhone,
+          pdfBuffer: finalBuffer,
+          fileName: pdfName,
+          caption: caption || pdfName,
+        });
+      } else if (provider === 'mock') {
+        if (request.mockShouldTimeout) {
+          throw new Error('OpenWA sunucusu 15000ms içinde yanıt vermedi (Zaman aşımı / ETIMEDOUT).');
+        }
+        if (request.mockShouldReject) {
+          throw new Error('ECONNRESET connection reset by peer');
+        }
+        if (request.mockShouldFail) {
+          providerResult = { success: false, error: 'HTTP 400 Bad Request: Geçersiz numara.' };
+        } else {
+          providerResult = { success: true, messageId: `mock_msg_${Date.now()}` };
+        }
+      } else {
+        providerResult = await sendOpenWaDocumentInternal({
+          baseUrl: openwaConfig?.baseUrl || 'http://127.0.0.1:2785/api',
+          sessionId: openwaConfig?.sessionId || 'default',
+          phone: cleanPhone,
+          base64: finalBase64,
+          fileName: pdfName,
+          caption: caption || pdfName,
+        });
+      }
+    } catch (providerErr) {
+      providerResult = {
+        success: false,
+        error: providerErr.message || String(providerErr),
+      };
+    }
+
+    // 4. Result Classification & Authoritative SQLite Update (P0-B)
+    const isAmbiguous = isAmbiguousError(providerResult.error);
+
+    if (providerResult.success) {
+      dispatchRepository.updateDispatchStatus(dispatchKey, 'sent', {
+        provider_message_id: providerResult.messageId || null,
+      });
+
+      return {
+        success: true,
+        allowed: true,
+        outcome: 'success',
+        dispatchKey,
+        status: 'sent',
+        messageId: providerResult.messageId || null,
+        pdfSent: true,
+        messageSent: true,
+      };
+    } else if (isAmbiguous) {
+      dispatchRepository.updateDispatchStatus(dispatchKey, 'unknown', {
+        last_error: providerResult.error || 'Zaman aşımı / belirsiz teslimat.',
+      });
+
+      return {
+        success: false,
+        allowed: true,
+        outcome: 'unknown',
+        dispatchKey,
+        status: 'unknown',
+        error: providerResult.error,
+        pdfSent: false,
+        messageSent: false,
+      };
+    } else {
+      dispatchRepository.updateDispatchStatus(dispatchKey, 'failed', {
+        last_error: providerResult.error || 'Gönderim başarısız oldu.',
+      });
+
+      return {
+        success: false,
+        allowed: true,
+        outcome: 'failed',
+        dispatchKey,
+        status: 'failed',
+        error: providerResult.error,
+        pdfSent: false,
+        messageSent: false,
+      };
+    }
+  } catch (err) {
+    console.error('[Electron] dispatch:send Hatası:', err.message);
+    return {
+      success: false,
+      allowed: false,
+      error: err.message,
+    };
+  }
+});
+
+ipcMain.handle('dispatch:updateStatus', async () => {
+  return {
+    success: false,
+    error: 'Erişim Reddedildi: dispatch:updateStatus doğrudan Renderer tarafından çağrılamaz. Durum güncellemeleri yalnızca Main Process tarafından yetkili biçimde yönetilir.',
+  };
 });
 
 ipcMain.handle('dispatch:getByKey', async (_, dispatchKey) => {

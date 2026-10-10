@@ -132,7 +132,42 @@ export interface ElectronDispatchRecord {
   updated_at: string;
 }
 
+export interface ElectronDispatchSendRequest {
+  studentId: string;
+  studentName: string;
+  phone: string;
+  examName: string;
+  pdfName: string;
+  pdfPath?: string;
+  pdfBase64?: string;
+  provider?: string;
+  caption?: string;
+  messageText?: string;
+  confirmationToken?: string;
+  openwaConfig?: { baseUrl?: string; sessionId?: string };
+  metaConfig?: { phoneNumberId?: string };
+  mockShouldTimeout?: boolean;
+  mockShouldReject?: boolean;
+  mockShouldFail?: boolean;
+}
+
+export interface ElectronDispatchSendResult {
+  success: boolean;
+  allowed?: boolean;
+  outcome?: 'success' | 'unknown' | 'failed' | 'db_error';
+  dispatchKey?: string;
+  status?: string;
+  messageId?: string | null;
+  pdfSent?: boolean;
+  messageSent?: boolean;
+  code?: string;
+  reason?: string;
+  error?: string;
+  existing?: ElectronDispatchRecord | null;
+}
+
 export interface ElectronDispatchAPI {
+  send: (request: ElectronDispatchSendRequest) => Promise<ElectronDispatchSendResult>;
   reserve: (
     params: ElectronDispatchReserveParams,
     options?: { confirmationToken?: string; allowUnknownRetry?: boolean }

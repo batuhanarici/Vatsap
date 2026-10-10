@@ -601,8 +601,12 @@ class DispatchRepository {
 
     // Delivery Proof Invariant (P0-3B.3)
     if (status === 'delivered' && extra && extra.requireDeliveryProof) {
-      const proof = extra.delivery_proof || extra.provider_message_id || existing.provider_message_id;
-      if (!proof) {
+      const hasProof = Boolean(
+        (extra.delivery_proof && String(extra.delivery_proof).trim().length > 0) ||
+        (extra.provider_message_id && String(extra.provider_message_id).trim().length > 0) ||
+        extra.webhookVerified === true
+      );
+      if (!hasProof) {
         throw new Error(
           'DispatchRepository: "delivered" durumu için doğrulanmış teslimat kanıtı veya mesaj kimliği zorunludur.'
         );
