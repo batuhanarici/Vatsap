@@ -263,205 +263,24 @@ ipcMain.handle('meta:getStatus', async (_, options) => {
   }
 });
 
-ipcMain.handle('meta:sendMessage', async (_, options) => {
-  const { phoneNumberId, phone, message } = options || {};
-  if (!phoneNumberId || !phone || !message) {
-    return {
-      success: false,
-      outcome: 'failed',
-      pdfSent: false,
-      messageSent: false,
-      error: 'Eksik parametreler.',
-    };
-  }
-
-  const metaToken = credentialService.getMetaAccessToken();
-  if (!metaToken) {
-    return {
-      success: false,
-      outcome: 'failed',
-      pdfSent: false,
-      messageSent: false,
-      error: 'Meta API Erişim Belirteci (Token) bulunamadı.',
-    };
-  }
-
-  try {
-    const cleanPhone = phone.replace(/[^0-9]/g, '');
-    const response = await fetch(
-      `https://graph.facebook.com/v21.0/${encodeURIComponent(phoneNumberId.trim())}/messages`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${metaToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          messaging_product: 'whatsapp',
-          recipient_type: 'individual',
-          to: cleanPhone,
-          type: 'text',
-          text: {
-            preview_url: false,
-            body: message,
-          },
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => null);
-      return {
-        success: false,
-        outcome: 'failed',
-        pdfSent: false,
-        messageSent: false,
-        error: errorData?.error?.message || `Gönderim başarısız (${response.status})`,
-      };
-    }
-
-    const resJson = await response.json();
-    return {
-      success: true,
-      outcome: 'partial_success',
-      pdfSent: false,
-      messageSent: true,
-      messageId: resJson?.messages?.[0]?.id,
-    };
-  } catch (err) {
-    return {
-      success: false,
-      outcome: 'failed',
-      pdfSent: false,
-      messageSent: false,
-      error: 'Bağlantı hatası',
-    };
-  }
+ipcMain.handle('meta:sendMessage', async () => {
+  return {
+    success: false,
+    outcome: 'failed',
+    pdfSent: false,
+    messageSent: false,
+    error: 'Erişim Reddedildi: meta:sendMessage kanalı kaldırıldı. Rezervasyonsuz doğrudan mesaj gönderimine izin verilmez.',
+  };
 });
 
-ipcMain.handle('meta:sendDocument', async (_, options) => {
-  const { phoneNumberId, phone, base64Data, fileName, caption } = options || {};
-  if (!phoneNumberId || !phone || !base64Data) {
-    return {
-      success: false,
-      outcome: 'failed',
-      pdfSent: false,
-      messageSent: false,
-      error: 'Eksik parametreler.',
-    };
-  }
-
-  const metaToken = credentialService.getMetaAccessToken();
-  if (!metaToken) {
-    return {
-      success: false,
-      outcome: 'failed',
-      pdfSent: false,
-      messageSent: false,
-      error: 'Meta API Erişim Belirteci (Token) bulunamadı.',
-    };
-  }
-
-  try {
-    // 1. Upload media
-    const cleanBase64 = (base64Data.startsWith('data:') ? base64Data.split(',')[1] : base64Data).trim().replace(/\s+/g, '');
-    const binaryBuffer = Buffer.from(cleanBase64, 'base64');
-    const blob = new Blob([binaryBuffer], { type: 'application/pdf' });
-    const formData = new FormData();
-    formData.append('messaging_product', 'whatsapp');
-    formData.append('type', 'application/pdf');
-    formData.append('file', blob, fileName || 'karne.pdf');
-
-    const uploadRes = await fetch(
-      `https://graph.facebook.com/v21.0/${encodeURIComponent(phoneNumberId.trim())}/media`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${metaToken}`,
-        },
-        body: formData,
-      }
-    );
-
-    if (!uploadRes.ok) {
-      const errorData = await uploadRes.json().catch(() => null);
-      return {
-        success: false,
-        outcome: 'failed',
-        pdfSent: false,
-        messageSent: false,
-        error: `Meta Cloud PDF yükleme hatası: ${errorData?.error?.message || uploadRes.statusText}`,
-      };
-    }
-
-    const uploadJson = await uploadRes.json();
-    const mediaId = uploadJson?.id;
-    if (!mediaId) {
-      return {
-        success: false,
-        outcome: 'failed',
-        pdfSent: false,
-        messageSent: false,
-        error: 'Meta Cloud API geçerli bir Media ID döndürmedi.',
-      };
-    }
-
-    // 2. Send document
-    const cleanPhone = phone.replace(/[^0-9]/g, '');
-    const docPayload = {
-      messaging_product: 'whatsapp',
-      recipient_type: 'individual',
-      to: cleanPhone,
-      type: 'document',
-      document: {
-        id: mediaId,
-        filename: fileName || 'karne.pdf',
-      },
-    };
-    if (caption && caption.trim()) {
-      docPayload.document.caption = caption.trim();
-    }
-
-    const sendRes = await fetch(
-      `https://graph.facebook.com/v21.0/${encodeURIComponent(phoneNumberId.trim())}/messages`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${metaToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(docPayload),
-      }
-    );
-
-    if (!sendRes.ok) {
-      const errorData = await sendRes.json().catch(() => null);
-      return {
-        success: false,
-        outcome: 'failed',
-        pdfSent: false,
-        messageSent: false,
-        error: errorData?.error?.message || `Mesaj gönderilemedi (${sendRes.status})`,
-      };
-    }
-
-    const sendJson = await sendRes.json();
-    return {
-      success: true,
-      outcome: 'success',
-      pdfSent: true,
-      messageSent: true,
-      messageId: sendJson?.messages?.[0]?.id,
-    };
-  } catch (err) {
-    return {
-      success: false,
-      outcome: 'failed',
-      pdfSent: false,
-      messageSent: false,
-      error: 'Bağlantı hatası',
-    };
-  }
+ipcMain.handle('meta:sendDocument', async () => {
+  return {
+    success: false,
+    outcome: 'failed',
+    pdfSent: false,
+    messageSent: false,
+    error: 'Erişim Reddedildi: meta:sendDocument kanalı kaldırıldı. PDF belge gönderimleri yalnızca güvenli dispatch:send üzerinden gerçekleştirilebilir.',
+  };
 });
 
 // IPC Handler for OpenWA HTTP API requests (Hardened: Loopback 2785 only, credential injected by Main)

@@ -101,12 +101,21 @@ export class MetaCloudProvider implements WhatsAppProvider {
 
   async sendMessage(phone: string, message: string): Promise<SendResult> {
     // 1. Electron Desktop IPC Execution (Credentials isolated in Main Process)
-    if (typeof window !== 'undefined' && window.electronAPI?.metaCloud) {
-      return window.electronAPI.metaCloud.sendMessage({
-        phoneNumberId: this.config.phoneNumberId,
-        phone,
-        message,
-      });
+    if (typeof window !== 'undefined' && window.electronAPI?.isElectron) {
+      if (window.electronAPI.metaCloud?.sendMessage) {
+        return window.electronAPI.metaCloud.sendMessage({
+          phoneNumberId: this.config.phoneNumberId,
+          phone,
+          message,
+        });
+      }
+      return {
+        success: false,
+        outcome: 'failed',
+        pdfSent: false,
+        messageSent: false,
+        error: 'Erişim Reddedildi: Rezervasyonsuz doğrudan mesaj gönderimi kapatılmıştır.',
+      };
     }
 
     // 2. Web Browser Fallback
@@ -232,15 +241,15 @@ export class MetaCloudProvider implements WhatsAppProvider {
     fileName: string,
     caption?: string
   ): Promise<SendResult> {
-    // 1. Electron Desktop IPC Execution (Credentials isolated in Main Process)
-    if (typeof window !== 'undefined' && window.electronAPI?.metaCloud) {
-      return window.electronAPI.metaCloud.sendDocument({
-        phoneNumberId: this.config.phoneNumberId,
-        phone,
-        base64Data,
-        fileName,
-        caption,
-      });
+    // 1. Electron Desktop IPC Execution: Must strictly use dispatch:send
+    if (typeof window !== 'undefined' && window.electronAPI?.isElectron) {
+      return {
+        success: false,
+        outcome: 'failed',
+        pdfSent: false,
+        messageSent: false,
+        error: 'Erişim Reddedildi: Belge gönderimleri yalnızca rezervasyonlu dispatch:send üzerinden yapılabilir.',
+      };
     }
 
     // 2. Web Browser Fallback

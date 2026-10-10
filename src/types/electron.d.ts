@@ -36,7 +36,7 @@ export interface ElectronMetaCloudAPI {
     details?: string;
     phoneConnected?: string;
   }>;
-  sendMessage: (options: {
+  sendMessage?: (options: {
     phoneNumberId: string;
     phone: string;
     message: string;
@@ -48,7 +48,7 @@ export interface ElectronMetaCloudAPI {
     messageId?: string;
     error?: string;
   }>;
-  sendDocument: (options: {
+  sendDocument?: (options: {
     phoneNumberId: string;
     phone: string;
     base64Data: string;

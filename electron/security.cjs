@@ -183,17 +183,55 @@ function validateOpenWaRequest(options) {
     return { valid: false, error: `Geçersiz veya izin verilmeyen HTTP yöntemi: ${upperMethod}` };
   }
 
-  // 5. Path validation: Must start with /api/ or allowed OpenWA endpoints
+  // 5. Path validation: Whitelist only OpenWA session management and health check routes (P0-3B.5)
   const pathname = parsedUrl.pathname;
-  const isAllowedPath =
-    pathname.startsWith('/api/') ||
-    pathname === '/api' ||
-    pathname.startsWith('/sessions') ||
-    pathname === '/ping' ||
-    pathname === '/health';
+  const normalizedPath = pathname.replace(/\/+$/, '') || '/';
 
-  if (!isAllowedPath) {
-    return { valid: false, error: `Erişim reddedildi: İstek yapılan API yolu (${pathname}) OpenWA standart rotası değildir.` };
+  // Explicitly block all document or message sending via openwa:request
+  if (
+    normalizedPath.includes('/messages/send-document') ||
+    normalizedPath.includes('/send-document') ||
+    normalizedPath.includes('/sendDocument') ||
+    normalizedPath.includes('/sendFile') ||
+    normalizedPath.includes('/sendPdf')
+  ) {
+    return {
+      valid: false,
+      error: 'Erişim reddedildi: Belge gönderimi doğrudan openwa:request üzerinden yapılamaz. Belge gönderimi yalnızca dispatch:send üzerinden yapılmalıdır.',
+    };
+  }
+
+  if (
+    normalizedPath.includes('/messages/send-text') ||
+    normalizedPath.includes('/sendText') ||
+    normalizedPath.includes('/sendMessage') ||
+    normalizedPath.includes('/messages')
+  ) {
+    return {
+      valid: false,
+      error: 'Erişim reddedildi: Mesaj gönderimi doğrudan openwa:request üzerinden yapılamaz. Normal gönderimler yalnızca dispatch:send üzerinden yapılmalıdır.',
+    };
+  }
+
+  // Allowlist: Health checks and session management only
+  const isHealthPath =
+    normalizedPath === '/ping' ||
+    normalizedPath === '/health' ||
+    normalizedPath === '/api' ||
+    normalizedPath === '/api/ping' ||
+    normalizedPath === '/api/health';
+
+  const isSessionPath =
+    normalizedPath === '/sessions' ||
+    normalizedPath.startsWith('/sessions/') ||
+    normalizedPath === '/api/sessions' ||
+    normalizedPath.startsWith('/api/sessions/');
+
+  if (!isHealthPath && !isSessionPath) {
+    return {
+      valid: false,
+      error: `Erişim reddedildi: İstek yapılan API yolu (${pathname}) OpenWA standart rotası değildir (yalnızca oturum yönetimi ve sağlık kontrolü rotaları izinlidir).`,
+    };
   }
 
   // 6. Header Sanitization & Disallow dangerous headers

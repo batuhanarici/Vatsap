@@ -606,6 +606,16 @@ export class OpenWAProvider implements WhatsAppProvider {
     fileName: string,
     caption?: string
   ): Promise<SendResult> {
+    if (typeof window !== 'undefined' && window.electronAPI?.isElectron) {
+      return {
+        success: false,
+        outcome: 'failed',
+        pdfSent: false,
+        messageSent: false,
+        error: 'Erişim Reddedildi: Belge gönderimleri yalnızca rezervasyonlu dispatch:send üzerinden yapılabilir.',
+      };
+    }
+
     const chatId = this.formatChatId(phone);
     const sessionKey = this.effectiveSessionId;
 

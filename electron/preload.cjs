@@ -21,8 +21,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   metaCloud: {
     getStatus: (options) => ipcRenderer.invoke('meta:getStatus', options),
-    sendMessage: (options) => ipcRenderer.invoke('meta:sendMessage', options),
-    sendDocument: (options) => ipcRenderer.invoke('meta:sendDocument', options),
   },
   dispatch: {
     send: (request) => ipcRenderer.invoke('dispatch:send', request),

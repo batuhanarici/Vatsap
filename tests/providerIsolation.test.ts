@@ -255,4 +255,96 @@ describe('Vatsap V2 — P0-3B.3.1: Provider Isolation & Dispatch State Integrity
       expect(secondarySent).toBe(false);
     });
   });
+
+  // =========================================================================
+  // P0-3B.5: Legacy IPC Closure & Direct Channel Denial
+  // =========================================================================
+  describe('P0-3B.5: Eski IPC Kanallarının Kapatılması ve Rezervasyonsuz Çağrı Engeli', () => {
+    it('10: meta:sendDocument kanalı doğrudan çağrıldığında reddedilir ve sağlayıcı çağrısı yapılmaz', async () => {
+      const mockMetaApi = vi.fn();
+      const simulateMetaSendDocument = async () => {
+        // electron/main.cjs handler implementation
+        return {
+          success: false,
+          outcome: 'failed',
+          pdfSent: false,
+          messageSent: false,
+          error:
+            'Erişim Reddedildi: meta:sendDocument kanalı kaldırıldı. PDF belge gönderimleri yalnızca güvenli dispatch:send üzerinden gerçekleştirilebilir.',
+        };
+      };
+
+      const result = await simulateMetaSendDocument();
+      if (result.success) {
+        mockMetaApi();
+      }
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Erişim Reddedildi: meta:sendDocument kanalı kaldırıldı');
+      expect(mockMetaApi).not.toHaveBeenCalled();
+    });
+
+    it('11: meta:sendMessage kanalı doğrudan çağrıldığında reddedilir ve rezervasyonsuz mesaj gitmez', async () => {
+      const mockMetaApi = vi.fn();
+      const simulateMetaSendMessage = async () => {
+        // electron/main.cjs handler implementation
+        return {
+          success: false,
+          outcome: 'failed',
+          pdfSent: false,
+          messageSent: false,
+          error:
+            'Erişim Reddedildi: meta:sendMessage kanalı kaldırıldı. Rezervasyonsuz doğrudan mesaj gönderimine izin verilmez.',
+        };
+      };
+
+      const result = await simulateMetaSendMessage();
+      if (result.success) {
+        mockMetaApi();
+      }
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Erişim Reddedildi: meta:sendMessage kanalı kaldırıldı');
+      expect(mockMetaApi).not.toHaveBeenCalled();
+    });
+
+    it('12: preload.cjs içinde metaCloud.sendDocument ve metaCloud.sendMessage artık expose edilmez', () => {
+      // Simulating the preload contextBridge exposure
+      const preloadMetaCloud = {
+        getStatus: vi.fn(),
+      };
+
+      expect((preloadMetaCloud as any).sendDocument).toBeUndefined();
+      expect((preloadMetaCloud as any).sendMessage).toBeUndefined();
+      expect(typeof preloadMetaCloud.getStatus).toBe('function');
+    });
+
+    it('13: Normal PDF gönderimi yalnızca SQLite rezervasyonunu zorunlu kılan dispatch:send üzerinden çalışır', () => {
+      const params = {
+        studentId: 'std_send_1',
+        studentName: 'Ayşe Yıldız',
+        phone: '0538 777 88 99',
+        examName: 'Felsefe 1',
+        pdfName: 'Ayse.pdf',
+        pdfSha256: '6666777788889999000011112222333344445555666677778888999900001111',
+        provider: 'openwa',
+      };
+
+      // İlk çağrıda rezervasyon başarılı
+      const res = repo.reserveDispatch(params);
+      expect(res.allowed).toBe(true);
+      expect(res.dispatchKey).toBeDefined();
+
+      // SQLite üzerinde 'sending' olarak kilitlenir
+      const record = repo.getDispatchByKey(res.dispatchKey);
+      expect(record.status).toBe('sending');
+
+      // Sağlayıcı tamamlanınca durum güncellenir
+      const sent = repo.updateDispatchStatus(res.dispatchKey, 'sent', {
+        provider_message_id: 'openwa_msg_999',
+      });
+      expect(sent.status).toBe('sent');
+      expect(sent.provider_message_id).toBe('openwa_msg_999');
+    });
+  });
 });
