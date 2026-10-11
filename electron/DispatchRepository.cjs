@@ -140,6 +140,49 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    version: 2,
+    name: '002_reconciliation_audit',
+    up: (db) => {
+      // 1. Audit trail table for manual reconciliation (P1.1)
+      db.run(`
+        CREATE TABLE IF NOT EXISTS reconciliation_audit (
+          id TEXT PRIMARY KEY,
+          dispatch_key TEXT NOT NULL,
+          previous_status TEXT NOT NULL,
+          action TEXT NOT NULL CHECK(action IN ('confirm_delivered', 'authorize_retry')),
+          user_reason TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          retry_token_id TEXT
+        );
+      `);
+      db.run(`
+        CREATE INDEX IF NOT EXISTS idx_reconciliation_dispatch_key ON reconciliation_audit(dispatch_key);
+      `);
+
+      // 2. Add manual reconciliation metadata columns to dispatches table (safely checking existence)
+      const colStmt = db.prepare('PRAGMA table_info(dispatches);');
+      const existingCols = new Set();
+      try {
+        while (colStmt.step()) {
+          const colObj = colStmt.getAsObject();
+          if (colObj.name) existingCols.add(colObj.name);
+        }
+      } finally {
+        colStmt.free();
+      }
+
+      if (!existingCols.has('manual_reconciliation_status')) {
+        db.run('ALTER TABLE dispatches ADD COLUMN manual_reconciliation_status TEXT;');
+      }
+      if (!existingCols.has('reconciled_at')) {
+        db.run('ALTER TABLE dispatches ADD COLUMN reconciled_at TEXT;');
+      }
+      if (!existingCols.has('reconciliation_reason')) {
+        db.run('ALTER TABLE dispatches ADD COLUMN reconciliation_reason TEXT;');
+      }
+    },
+  },
 ];
 
 /**
@@ -709,6 +752,243 @@ class DispatchRepository {
       return Number(result[0].values[0][0]);
     }
     return 0;
+  }
+
+  /**
+   * Returns paginated dispatches with optional filters (P1.1).
+   * Safe parameterized query preventing SQL injection.
+   */
+  getAllDispatches(options = {}) {
+    this.assertInitialized();
+    const {
+      limit = 500,
+      offset = 0,
+      examName,
+      studentId,
+      status,
+      startDate,
+      endDate,
+    } = options || {};
+
+    let sql = 'SELECT * FROM dispatches WHERE 1=1';
+    const params = [];
+
+    if (examName && typeof examName === 'string') {
+      sql += ' AND exam_name = ?';
+      params.push(examName.trim());
+    }
+    if (studentId && typeof studentId === 'string') {
+      sql += ' AND student_id = ?';
+      params.push(studentId.trim());
+    }
+    if (status && typeof status === 'string' && ALLOWED_DISPATCH_STATUSES.has(status)) {
+      sql += ' AND status = ?';
+      params.push(status);
+    }
+    if (startDate && typeof startDate === 'string') {
+      sql += ' AND created_at >= ?';
+      params.push(startDate);
+    }
+    if (endDate && typeof endDate === 'string') {
+      sql += ' AND created_at <= ?';
+      params.push(endDate);
+    }
+
+    sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?;';
+    const safeLimit = Math.min(Math.max(1, Number(limit) || 500), 2000);
+    const safeOffset = Math.max(0, Number(offset) || 0);
+    params.push(safeLimit, safeOffset);
+
+    const stmt = this.db.prepare(sql);
+    const rows = [];
+    try {
+      stmt.bind(params);
+      while (stmt.step()) {
+        rows.push(stmt.getAsObject());
+      }
+    } finally {
+      stmt.free();
+    }
+
+    // Also get total count
+    let countSql = 'SELECT COUNT(*) as total FROM dispatches WHERE 1=1';
+    const countParams = [];
+    if (examName && typeof examName === 'string') {
+      countSql += ' AND exam_name = ?';
+      countParams.push(examName.trim());
+    }
+    if (studentId && typeof studentId === 'string') {
+      countSql += ' AND student_id = ?';
+      countParams.push(studentId.trim());
+    }
+    if (status && typeof status === 'string' && ALLOWED_DISPATCH_STATUSES.has(status)) {
+      countSql += ' AND status = ?';
+      countParams.push(status);
+    }
+    if (startDate && typeof startDate === 'string') {
+      countSql += ' AND created_at >= ?';
+      countParams.push(startDate);
+    }
+    if (endDate && typeof endDate === 'string') {
+      countSql += ' AND created_at <= ?';
+      countParams.push(endDate);
+    }
+
+    let totalCount = 0;
+    const countStmt = this.db.prepare(countSql);
+    try {
+      countStmt.bind(countParams);
+      if (countStmt.step()) {
+        totalCount = Number(countStmt.getAsObject().total || 0);
+      }
+    } finally {
+      countStmt.free();
+    }
+
+    return {
+      rows,
+      totalCount,
+      limit: safeLimit,
+      offset: safeOffset,
+    };
+  }
+
+  /**
+   * Reconciles an 'unknown' dispatch manually with a tamper-evident audit trail (P1.1).
+   * Actions:
+   * 1. 'confirm_delivered': User explicitly asserts recipient received the PDF.
+   *    Records user justification and sets manual_reconciliation_status = 'user_confirmed_delivered'.
+   *    Invariant: Does NOT change core provider status to 'delivered' without real delivery proof.
+   * 2. 'authorize_retry': User explicitly asserts recipient did NOT receive the PDF and authorizes retry.
+   *    Generates single-use, time-limited retry token bound to dispatch_key.
+   *    Sets manual_reconciliation_status = 'retry_authorized' and logs audit.
+   */
+  reconcileManual({ dispatchKey, action, userReason }) {
+    this.assertInitialized();
+
+    if (!dispatchKey || typeof dispatchKey !== 'string') {
+      throw new Error('reconcileManual: dispatchKey alanı zorunludur.');
+    }
+    if (action !== 'confirm_delivered' && action !== 'authorize_retry') {
+      throw new Error('reconcileManual: action yalnızca "confirm_delivered" veya "authorize_retry" olabilir.');
+    }
+    if (!userReason || typeof userReason !== 'string' || userReason.trim().length < 5) {
+      throw new Error('reconcileManual: userReason en az 5 karakterlik açıklama içermelidir.');
+    }
+
+    const existing = this.getDispatchByKey(dispatchKey);
+    if (!existing) {
+      throw new Error(`reconcileManual: dispatchKey "${dispatchKey}" bulunamadı.`);
+    }
+
+    if (existing.status !== 'unknown') {
+      throw new Error(
+        `reconcileManual: Yalnızca "unknown" durumundaki kayıtlar manuel uzlaştırılabilir. Mevcut durum: "${existing.status}".`
+      );
+    }
+
+    const nowIso = new Date().toISOString();
+    const cleanReason = userReason.trim();
+    const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    if (action === 'confirm_delivered') {
+      // Action A: User confirmed delivery
+      // Core status remains 'unknown' because provider proof does not exist;
+      // manual_reconciliation_status is set to 'user_confirmed_delivered'.
+      this.db.run(
+        `
+        UPDATE dispatches
+        SET manual_reconciliation_status = 'user_confirmed_delivered',
+            reconciled_at = ?,
+            reconciliation_reason = ?,
+            updated_at = ?
+        WHERE dispatch_key = ?;
+        `,
+        [nowIso, cleanReason, nowIso, dispatchKey]
+      );
+
+      this.db.run(
+        `
+        INSERT INTO reconciliation_audit (
+          id, dispatch_key, previous_status, action, user_reason, created_at, retry_token_id
+        ) VALUES (?, ?, ?, ?, ?, ?, NULL);
+        `,
+        [auditId, dispatchKey, existing.status, 'confirm_delivered', cleanReason, nowIso]
+      );
+
+      this.saveToDisk();
+
+      return {
+        success: true,
+        action: 'confirm_delivered',
+        dispatchKey,
+        manualReconciliationStatus: 'user_confirmed_delivered',
+        reconciledAt: nowIso,
+        reconciliationReason: cleanReason,
+        auditId,
+      };
+    } else {
+      // Action B: User confirmed message did not reach; authorize retry with single-use token
+      const tokenInfo = this.createUnknownRetryToken(dispatchKey);
+
+      this.db.run(
+        `
+        UPDATE dispatches
+        SET manual_reconciliation_status = 'retry_authorized',
+            reconciled_at = ?,
+            reconciliation_reason = ?,
+            updated_at = ?
+        WHERE dispatch_key = ?;
+        `,
+        [nowIso, cleanReason, nowIso, dispatchKey]
+      );
+
+      this.db.run(
+        `
+        INSERT INTO reconciliation_audit (
+          id, dispatch_key, previous_status, action, user_reason, created_at, retry_token_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?);
+        `,
+        [auditId, dispatchKey, existing.status, 'authorize_retry', cleanReason, nowIso, tokenInfo.token]
+      );
+
+      this.saveToDisk();
+
+      return {
+        success: true,
+        action: 'authorize_retry',
+        dispatchKey,
+        manualReconciliationStatus: 'retry_authorized',
+        reconciledAt: nowIso,
+        reconciliationReason: cleanReason,
+        auditId,
+        retryToken: tokenInfo.token,
+        expiresAt: tokenInfo.expiresAt,
+        warning: tokenInfo.warning,
+      };
+    }
+  }
+
+  /**
+   * Retrieves all reconciliation audit records for a given dispatch key (P1.1).
+   */
+  getReconciliationAudit(dispatchKey) {
+    this.assertInitialized();
+    if (!dispatchKey || typeof dispatchKey !== 'string') return [];
+
+    const stmt = this.db.prepare(
+      'SELECT * FROM reconciliation_audit WHERE dispatch_key = ? ORDER BY created_at DESC;'
+    );
+    const rows = [];
+    try {
+      stmt.bind([dispatchKey]);
+      while (stmt.step()) {
+        rows.push(stmt.getAsObject());
+      }
+      return rows;
+    } finally {
+      stmt.free();
+    }
   }
 
   /**

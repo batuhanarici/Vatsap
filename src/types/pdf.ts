@@ -52,4 +52,7 @@ export interface MatchedItem {
   confirmedStudentPhone?: string;
   confirmedStudentName?: string;
   attempts?: number;
+  confirmationToken?: string;
+  manualReconciliationStatus?: 'user_confirmed_delivered' | 'retry_authorized' | null;
+  dispatchKey?: string;
 }

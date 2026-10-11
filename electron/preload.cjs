@@ -32,6 +32,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getByKey: (dispatchKey) => ipcRenderer.invoke('dispatch:getByKey', dispatchKey),
     getByExam: (examName) => ipcRenderer.invoke('dispatch:getByExam', examName),
     getByStatus: (status) => ipcRenderer.invoke('dispatch:getByStatus', status),
+    getAll: (options) => ipcRenderer.invoke('dispatch:getAll', options),
+    reconcileManual: (params) => ipcRenderer.invoke('dispatch:reconcileManual', params),
+    getReconciliationAudit: (dispatchKey) =>
+      ipcRenderer.invoke('dispatch:getReconciliationAudit', dispatchKey),
     computeKey: (payload) => ipcRenderer.invoke('dispatch:computeKey', payload),
   },
 });

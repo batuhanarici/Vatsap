@@ -3,6 +3,7 @@ import { HistoryItem } from '../types/history';
 import { OpenWAConfig } from '../types/whatsapp';
 import { MessageTemplate } from '../types/template';
 import { ScheduledDispatch } from '../types/schedule';
+import { maskPhoneNumber } from './normalizer';
 
 export interface FullBackupData {
   schemaVersion: number;
@@ -606,6 +607,129 @@ export const storageService = {
 
   clearHistory(): void {
     localStorage.removeItem(HISTORY_STORAGE_KEY);
+  },
+
+  /**
+   * Fetches authoritative dispatches from Main Process SQLite database (P1.1).
+   * In Electron Desktop, SQLite is the single source of truth.
+   * If SQLite fails, returns distinct error status (never falsely hides error with empty list).
+   */
+  async fetchHistoryFromSqlite(options?: {
+    limit?: number;
+    offset?: number;
+    examName?: string;
+    studentId?: string;
+    status?: string;
+    startDate?: string;
+    endDate?: string;
+  }): Promise<{ success: boolean; items: HistoryItem[]; totalCount: number; error?: string }> {
+    try {
+      if (typeof window !== 'undefined' && window.electronAPI?.dispatch?.getAll) {
+        const res = await window.electronAPI.dispatch.getAll(options);
+        if (!res.success) {
+          return {
+            success: false,
+            items: [],
+            totalCount: 0,
+            error: res.error || 'SQLite veritabanı okunamadı.',
+          };
+        }
+
+        const mapped: HistoryItem[] = (res.dispatches || []).map((d: any) => ({
+          id: d.id,
+          dispatchKey: d.dispatchKey,
+          studentId: d.studentId,
+          studentName: d.studentName,
+          parentName: '',
+          maskedPhone: maskPhoneNumber(d.phone || ''),
+          phone: d.phone,
+          pdfFileName: d.pdfFileName,
+          date: d.date,
+          updatedAt: d.updatedAt,
+          status: d.status as any,
+          provider: d.provider,
+          retryCount: d.retryCount,
+          errorMessage: d.errorMessage || undefined,
+          examName: d.examName,
+          manualReconciliationStatus: d.manualReconciliationStatus || null,
+          reconciledAt: d.reconciledAt || null,
+          reconciliationReason: d.reconciliationReason || null,
+        }));
+
+        return {
+          success: true,
+          items: mapped,
+          totalCount: res.totalCount || mapped.length,
+        };
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        success: false,
+        items: [],
+        totalCount: 0,
+        error: `SQLite okuma hatası: ${msg}`,
+      };
+    }
+
+    // Web fallback for browser environment
+    const local = this.getHistory();
+    return {
+      success: true,
+      items: local,
+      totalCount: local.length,
+    };
+  },
+
+  /**
+   * Reconciles an 'unknown' dispatch manually with Main Process audit trail (P1.1).
+   */
+  async reconcileUnknownDispatch(payload: {
+    dispatchKey: string;
+    action: 'confirm_delivered' | 'authorize_retry';
+    userReason: string;
+  }): Promise<{
+    success: boolean;
+    action?: string;
+    dispatchKey?: string;
+    manualReconciliationStatus?: string;
+    reconciledAt?: string;
+    reconciliationReason?: string;
+    retryToken?: string;
+    expiresAt?: number;
+    warning?: string;
+    error?: string;
+  }> {
+    if (typeof window !== 'undefined' && window.electronAPI?.dispatch?.reconcileManual) {
+      return window.electronAPI.dispatch.reconcileManual(payload);
+    }
+
+    // Web / mock fallback
+    const history = this.getHistory();
+    const updated = history.map((item) => {
+      if (item.dispatchKey === payload.dispatchKey || item.id === payload.dispatchKey) {
+        return {
+          ...item,
+          manualReconciliationStatus:
+            payload.action === 'confirm_delivered' ? ('user_confirmed_delivered' as const) : ('retry_authorized' as const),
+          reconciledAt: new Date().toISOString(),
+          reconciliationReason: payload.userReason,
+        };
+      }
+      return item;
+    });
+    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(updated));
+
+    return {
+      success: true,
+      action: payload.action,
+      dispatchKey: payload.dispatchKey,
+      manualReconciliationStatus:
+        payload.action === 'confirm_delivered' ? 'user_confirmed_delivered' : 'retry_authorized',
+      reconciledAt: new Date().toISOString(),
+      reconciliationReason: payload.userReason,
+      retryToken: payload.action === 'authorize_retry' ? `mock_retry_token_${Date.now()}` : undefined,
+    };
   },
 
   getTheme(): 'light' | 'dark' {

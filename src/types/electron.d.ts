@@ -114,6 +114,16 @@ export interface ElectronDispatchReserveResult {
   error?: string;
 }
 
+export interface ElectronReconciliationAuditRecord {
+  id: string;
+  dispatch_key: string;
+  previous_status: string;
+  action: 'confirm_delivered' | 'authorize_retry';
+  user_reason: string;
+  created_at: string;
+  retry_token_id?: string | null;
+}
+
 export interface ElectronDispatchRecord {
   id: string;
   dispatch_key: string;
@@ -130,6 +140,20 @@ export interface ElectronDispatchRecord {
   last_error?: string | null;
   created_at: string;
   updated_at: string;
+  manual_reconciliation_status?: 'user_confirmed_delivered' | 'retry_authorized' | null;
+  reconciled_at?: string | null;
+  reconciliation_reason?: string | null;
+  dispatchKey?: string;
+  studentId?: string;
+  studentName?: string;
+  examName?: string;
+  pdfFileName?: string;
+  date?: string;
+  updatedAt?: string;
+  errorMessage?: string | null;
+  manualReconciliationStatus?: 'user_confirmed_delivered' | 'retry_authorized' | null;
+  reconciledAt?: string | null;
+  reconciliationReason?: string | null;
 }
 
 export interface ElectronDispatchSendRequest {
@@ -193,6 +217,44 @@ export interface ElectronDispatchAPI {
   getByKey: (dispatchKey: string) => Promise<ElectronDispatchRecord | null>;
   getByExam: (examName: string) => Promise<ElectronDispatchRecord[]>;
   getByStatus: (status: string) => Promise<ElectronDispatchRecord[]>;
+  getAll: (options?: {
+    limit?: number;
+    offset?: number;
+    examName?: string;
+    studentId?: string;
+    status?: string;
+    startDate?: string;
+    endDate?: string;
+  }) => Promise<{
+    success: boolean;
+    dispatches: ElectronDispatchRecord[];
+    totalCount: number;
+    limit?: number;
+    offset?: number;
+    error?: string;
+  }>;
+  reconcileManual: (payload: {
+    dispatchKey: string;
+    action: 'confirm_delivered' | 'authorize_retry';
+    userReason: string;
+  }) => Promise<{
+    success: boolean;
+    action?: string;
+    dispatchKey?: string;
+    manualReconciliationStatus?: string;
+    reconciledAt?: string;
+    reconciliationReason?: string;
+    auditId?: string;
+    retryToken?: string;
+    expiresAt?: number;
+    warning?: string;
+    error?: string;
+  }>;
+  getReconciliationAudit: (dispatchKey: string) => Promise<{
+    success: boolean;
+    records: ElectronReconciliationAuditRecord[];
+    error?: string;
+  }>;
   computeKey: (payload: {
     studentId: string;
     examName: string;

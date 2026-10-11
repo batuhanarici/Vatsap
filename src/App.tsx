@@ -54,6 +54,7 @@ import { computeQuickHash } from './services/dispatchSafetyGate';
 import { ManualMatchModal } from './components/ManualMatchModal';
 import { OcrFailureModal } from './components/OcrFailureModal';
 import { BackupPreviewModal } from './components/BackupPreviewModal';
+import { ReconciliationModal } from './components/ReconciliationModal';
 
 export default function App() {
   // Navigation
@@ -65,6 +66,12 @@ export default function App() {
   const [activeTemplateId, setActiveTemplateId] = useState<string>(() => storageService.getActiveTemplateId());
   const [config, setConfig] = useState(() => storageService.getConfig());
   const [history, setHistory] = useState<HistoryItem[]>(() => storageService.getHistory());
+  const [historyLoading, setHistoryLoading] = useState<boolean>(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+
+  // Manual Reconciliation State (P1.1)
+  const [reconcileItem, setReconcileItem] = useState<HistoryItem | MatchedItem | null>(null);
+  const [isReconciliationOpen, setIsReconciliationOpen] = useState<boolean>(false);
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => storageService.getTheme() === 'dark');
   const [scheduledDispatch, setScheduledDispatch] = useState<ScheduledDispatch | null>(() =>
     storageService.getSchedule()
@@ -254,9 +261,68 @@ export default function App() {
     }
   };
 
+  // 2.5. Authoritative SQLite History Loading (P1.1)
+  const loadHistory = async () => {
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const res = await storageService.fetchHistoryFromSqlite();
+      if (res.success) {
+        setHistory(res.items);
+      } else {
+        setHistoryError(res.error || 'SQLite geçmişi okunamadı.');
+      }
+    } catch (err: unknown) {
+      setHistoryError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const handleReconciled = async (result: { action: 'confirm_delivered' | 'authorize_retry'; retryToken?: string }) => {
+    await loadHistory();
+    if (reconcileItem) {
+      const studentId = 'student' in reconcileItem ? reconcileItem.student.id : reconcileItem.studentId;
+      if (studentId) {
+        if (result.action === 'confirm_delivered') {
+          setItemOverrides((prev) => ({
+            ...prev,
+            [studentId]: {
+              ...prev[studentId],
+              sendingStatus: 'unknown',
+              manualReconciliationStatus: 'user_confirmed_delivered',
+            },
+          }));
+          addToast({
+            type: 'success',
+            title: 'Uzlaştırma Başarılı',
+            message: 'Karne teslimatı veli teyidiyle kaydedildi.',
+          });
+        } else if (result.action === 'authorize_retry' && result.retryToken) {
+          setItemOverrides((prev) => ({
+            ...prev,
+            [studentId]: {
+              ...prev[studentId],
+              sendingStatus: 'failed',
+              manualReconciliationStatus: 'retry_authorized',
+              confirmationToken: result.retryToken,
+              errorMessage: 'Yeniden gönderim yetkilendirildi. Tekrar Dene butonunu kullanabilirsiniz.',
+            },
+          }));
+          addToast({
+            type: 'info',
+            title: 'Tekrar Gönderim Yetkilendirildi',
+            message: 'Tek kullanımlık onay belirteci üretildi. Karne şimdi yeniden gönderilebilir.',
+          });
+        }
+      }
+    }
+  };
+
   useEffect(() => {
     storageService.initSecureStorage().then(() => {
       checkStatus();
+      loadHistory();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMockMode, config.providerType, config.baseUrl, config.sessionId, config.apiKey, config.metaToken, config.metaPhoneNumberId]);
@@ -654,7 +720,10 @@ export default function App() {
       ? matchedItems
       : matchedItems.filter((i) => (i.student.group || 'Genel') === selectedGroup);
 
-    const itemsToSend = targetItems.filter((i) => i.status === 'ready' || i.status === 'pending_confirmation');
+    // V2 Safety Invariant (P1.1): unknown items MUST NOT be auto-retried in batch queue!
+    const itemsToSend = targetItems.filter(
+      (i) => (i.status === 'ready' || i.status === 'pending_confirmation') && i.sendingStatus !== 'unknown'
+    );
     const examName = customExamName || config.examName || 'Genel Değerlendirme Sınavı';
 
     await executeSenderQueue({
@@ -684,7 +753,7 @@ export default function App() {
 
     setIsCompleted(true);
     setIsSending(false);
-    setHistory(storageService.getHistory());
+    await loadHistory();
   };
 
   const handleTogglePause = () => {
@@ -731,7 +800,7 @@ export default function App() {
 
     setIsCompleted(true);
     setIsSending(false);
-    setHistory(storageService.getHistory());
+    await loadHistory();
   };
 
   const handleResumeInterruptedQueue = async () => {
@@ -789,7 +858,7 @@ export default function App() {
 
     setIsCompleted(true);
     setIsSending(false);
-    setHistory(storageService.getHistory());
+    await loadHistory();
   };
 
   const handleDiscardInterruptedQueue = () => {
@@ -934,7 +1003,7 @@ export default function App() {
     });
 
     setIsSending(false);
-    setHistory(storageService.getHistory());
+    await loadHistory();
   };
 
   // 6. Student Actions
@@ -1193,6 +1262,10 @@ export default function App() {
               onSelectGroup={setSelectedGroup}
               onConfirmMatch={handleConfirmMatch}
               onOpenManualMatch={handleOpenManualMatch}
+              onOpenReconcile={(item) => {
+                setReconcileItem(item);
+                setIsReconciliationOpen(true);
+              }}
             />
           </div>
         )}
@@ -1224,6 +1297,13 @@ export default function App() {
           <HistoryTable
             history={history}
             onClearHistory={handleClearHistory}
+            isLoading={historyLoading}
+            errorText={historyError}
+            onRefresh={loadHistory}
+            onOpenReconcile={(item) => {
+              setReconcileItem(item);
+              setIsReconciliationOpen(true);
+            }}
           />
         )}
       </main>
@@ -1399,6 +1479,14 @@ export default function App() {
         fileName={backupFileName}
         validationResult={backupValidationResult}
         onConfirmImport={handleConfirmImportBackup}
+      />
+
+      {/* Manual Unknown Reconciliation Modal (P1.1) */}
+      <ReconciliationModal
+        isOpen={isReconciliationOpen}
+        onClose={() => setIsReconciliationOpen(false)}
+        item={reconcileItem}
+        onReconciled={handleReconciled}
       />
 
       {/* Floating App-wide Toast Notifications */}

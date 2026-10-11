@@ -46,6 +46,7 @@ interface MatchingTableProps {
   onSelectGroup?: (group: string) => void;
   onConfirmMatch?: (studentId: string) => void;
   onOpenManualMatch?: (item: MatchedItem) => void;
+  onOpenReconcile?: (item: MatchedItem) => void;
 }
 
 export const MatchingTable: React.FC<MatchingTableProps> = ({
@@ -72,13 +73,14 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
   onSelectGroup,
   onConfirmMatch,
   onOpenManualMatch,
+  onOpenReconcile,
 }) => {
   const [internalGroup, setInternalGroup] = React.useState('all');
   const currentGroup = selectedGroup !== undefined ? selectedGroup : internalGroup;
   const handleGroupChange = onSelectGroup || setInternalGroup;
 
   // Status Filter tab
-  const [statusFilter, setStatusFilter] = React.useState<'all' | 'ready' | 'pending' | 'conflict' | 'missing'>('all');
+  const [statusFilter, setStatusFilter] = React.useState<'all' | 'ready' | 'pending' | 'conflict' | 'missing' | 'unknown'>('all');
 
   // Extract all unique groups
   const availableGroups = React.useMemo(() => {
@@ -98,23 +100,26 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
     }
 
     if (statusFilter === 'ready') {
-      list = list.filter((i) => i.status === 'ready');
+      list = list.filter((i) => i.status === 'ready' && i.sendingStatus !== 'unknown');
     } else if (statusFilter === 'pending') {
-      list = list.filter((i) => i.status === 'pending_confirmation' || i.needsConfirmation);
+      list = list.filter((i) => (i.status === 'pending_confirmation' || i.needsConfirmation) && i.sendingStatus !== 'unknown');
     } else if (statusFilter === 'conflict') {
       list = list.filter((i) => i.hasConflict);
     } else if (statusFilter === 'missing') {
       list = list.filter((i) => i.status === 'missing_pdf');
+    } else if (statusFilter === 'unknown') {
+      list = list.filter((i) => i.sendingStatus === 'unknown');
     }
 
     return list;
   }, [matchedItems, currentGroup, statusFilter]);
 
-  const readyCount = matchedItems.filter((i) => i.status === 'ready').length;
-  const pendingCount = matchedItems.filter((i) => i.status === 'pending_confirmation' || i.needsConfirmation).length;
+  const readyCount = matchedItems.filter((i) => i.status === 'ready' && i.sendingStatus !== 'unknown').length;
+  const pendingCount = matchedItems.filter((i) => (i.status === 'pending_confirmation' || i.needsConfirmation) && i.sendingStatus !== 'unknown').length;
   const conflictCount = matchedItems.filter((i) => i.hasConflict).length;
   const missingCount = matchedItems.filter((i) => i.status === 'missing_pdf').length;
   const invalidPhoneCount = matchedItems.filter((i) => i.status === 'invalid_phone').length;
+  const unknownCount = matchedItems.filter((i) => i.sendingStatus === 'unknown').length;
 
   const isConnected = whatsAppStatus.state === 'connected';
   const canSend = readyCount > 0 && !isSending;
@@ -202,6 +207,45 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
           >
             Tekrar Dene
           </button>
+        </div>
+      );
+    }
+
+    if (item.sendingStatus === 'unknown') {
+      const isUserConfirmed = item.manualReconciliationStatus === 'user_confirmed_delivered';
+      const isRetryAuthorized = item.manualReconciliationStatus === 'retry_authorized';
+
+      return (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span
+            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-semibold border ${
+              isUserConfirmed
+                ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700'
+                : isRetryAuthorized
+                ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border-blue-300 dark:border-blue-700'
+                : 'bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-700'
+            }`}
+            title="Mesajın WhatsApp tarafından işleme alınmış veya alıcıya ulaşmış olması mümkündür. Uygulama sonucu doğrulayamadığı için gönderim durumu belirsizdir. Yeniden gönderim mükerrer mesaja neden olabilir."
+          >
+            <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
+            <span>
+              {isUserConfirmed
+                ? 'Belirsiz (Veli Teyidi)'
+                : isRetryAuthorized
+                ? 'Belirsiz (Yetkili)'
+                : 'Belirsiz (Unknown)'}
+            </span>
+          </span>
+
+          {onOpenReconcile && !isUserConfirmed && (
+            <button
+              type="button"
+              onClick={() => onOpenReconcile(item)}
+              className="text-[11px] underline text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 cursor-pointer font-medium"
+            >
+              Uzlaştır
+            </button>
+          )}
         </div>
       );
     }
@@ -440,6 +484,19 @@ export const MatchingTable: React.FC<MatchingTableProps> = ({
               }`}
             >
               PDF Yok ({missingCount})
+            </button>
+          )}
+          {unknownCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setStatusFilter('unknown')}
+              className={`px-2 py-0.5 rounded font-medium cursor-pointer ${
+                statusFilter === 'unknown'
+                  ? 'bg-amber-600 text-white'
+                  : 'text-amber-800 dark:text-amber-300 bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-700'
+              }`}
+            >
+              ⚠️ Belirsiz ({unknownCount})
             </button>
           )}
         </div>

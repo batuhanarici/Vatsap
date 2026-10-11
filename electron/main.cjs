@@ -1032,6 +1032,87 @@ ipcMain.handle('dispatch:computeKey', async (_, payload) => {
   return computeDeterministicDispatchKey({ studentId, examName, phone, pdfSha256 });
 });
 
+ipcMain.handle('dispatch:getAll', async (_, options) => {
+  try {
+    if (!dispatchRepository.isInitialized()) {
+      throw new Error('DispatchRepository henüz başlatılmadı.');
+    }
+    const result = dispatchRepository.getAllDispatches(options || {});
+    // Sanitize records: project only allowed fields for UI
+    const sanitized = result.rows.map((row) => ({
+      id: row.id,
+      dispatchKey: row.dispatch_key,
+      studentId: row.student_id,
+      studentName: row.student_name,
+      phone: row.phone,
+      examName: row.exam_name,
+      pdfFileName: row.pdf_name,
+      provider: row.provider,
+      status: row.status,
+      retryCount: row.retry_count,
+      errorMessage: row.last_error,
+      date: row.created_at,
+      updatedAt: row.updated_at,
+      manualReconciliationStatus: row.manual_reconciliation_status || null,
+      reconciledAt: row.reconciled_at || null,
+      reconciliationReason: row.reconciliation_reason || null,
+    }));
+
+    return {
+      success: true,
+      dispatches: sanitized,
+      totalCount: result.totalCount,
+      limit: result.limit,
+      offset: result.offset,
+    };
+  } catch (err) {
+    console.error('[Electron] dispatch:getAll Hatası:', err.message);
+    return {
+      success: false,
+      error: `SQLite geçmişi okunamadı: ${err.message}`,
+      dispatches: [],
+      totalCount: 0,
+    };
+  }
+});
+
+ipcMain.handle('dispatch:reconcileManual', async (_, payload) => {
+  try {
+    if (!dispatchRepository.isInitialized()) {
+      throw new Error('DispatchRepository henüz başlatılmadı.');
+    }
+    const { dispatchKey, action, userReason } = payload || {};
+    const result = dispatchRepository.reconcileManual({ dispatchKey, action, userReason });
+    return result;
+  } catch (err) {
+    console.error('[Electron] dispatch:reconcileManual Hatası:', err.message);
+    return {
+      success: false,
+      error: err.message,
+    };
+  }
+});
+
+ipcMain.handle('dispatch:getReconciliationAudit', async (_, dispatchKey) => {
+  try {
+    if (!dispatchRepository.isInitialized()) {
+      throw new Error('DispatchRepository henüz başlatılmadı.');
+    }
+    const auditRecords = dispatchRepository.getReconciliationAudit(dispatchKey);
+    return {
+      success: true,
+      records: auditRecords,
+    };
+  } catch (err) {
+    console.error('[Electron] dispatch:getReconciliationAudit Hatası:', err.message);
+    return {
+      success: false,
+      error: err.message,
+      records: [],
+    };
+  }
+});
+
 app.whenReady().then(async () => {
   try {
     credentialService.setStorageDir(app.getPath('userData'));

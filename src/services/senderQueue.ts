@@ -333,7 +333,12 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
           metaConfig: {
             phoneNumberId: (provider as any)?.phoneNumberId || (provider as any)?.config?.metaPhoneNumberId,
           },
+          confirmationToken: currentItem.confirmationToken,
         });
+
+        if (sendRes.dispatchKey) {
+          currentItem.dispatchKey = sendRes.dispatchKey;
+        }
 
         if (!sendRes.allowed) {
           // Blocked by SQLite reservation
