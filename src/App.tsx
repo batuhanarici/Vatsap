@@ -18,10 +18,11 @@ import { SendingProgressModal } from './components/SendingProgressModal';
 import { PdfPreviewModal } from './components/PdfPreviewModal';
 import { ScheduleBanner } from './components/ScheduleBanner';
 import { ToastNotification, ToastMessage } from './components/ToastNotification';
+import { DispatchWizard, WizardStep } from './components/DispatchWizard';
 import { Play, RotateCcw } from 'lucide-react';
 
 import { Student, StudentFormData } from './types/student';
-import { LocalPdfFile, MatchedItem } from './types/pdf';
+import { LocalPdfFile, MatchedItem, MatchingStatus } from './types/pdf';
 import { WhatsAppStatus } from './types/whatsapp';
 import { HistoryItem } from './types/history';
 import { MessageTemplate } from './types/template';
@@ -50,7 +51,7 @@ import { WhatsAppWebProvider } from './services/whatsapp/WhatsAppWebProvider';
 import { MetaCloudProvider } from './services/whatsapp/MetaCloudProvider';
 import { WhatsAppProvider } from './services/whatsapp/types';
 import { executeSenderQueue, QueueProgressEvent } from './services/senderQueue';
-import { computeQuickHash } from './services/dispatchSafetyGate';
+import { computeQuickHash, computeMatchApprovalFingerprint } from './services/dispatchSafetyGate';
 import { ManualMatchModal } from './components/ManualMatchModal';
 import { OcrFailureModal } from './components/OcrFailureModal';
 import { BackupPreviewModal } from './components/BackupPreviewModal';
@@ -59,6 +60,7 @@ import { ReconciliationModal } from './components/ReconciliationModal';
 export default function App() {
   // Navigation
   const [activeTab, setActiveTab] = useState<TabType>('send');
+  const [wizardStep, setWizardStep] = useState<WizardStep>(1);
 
   // Persistent States
   const [students, setStudents] = useState<Student[]>(() => storageService.getStudents());
@@ -173,13 +175,91 @@ export default function App() {
   // Individual item overrides (for runtime updates during queue or manual retries)
   const [itemOverrides, setItemOverrides] = useState<Record<string, Partial<MatchedItem>>>({});
 
-  // 1. Matched Items Calculation
+  // 1. Matched Items Calculation with Tamper Invalidation & Global Conflict Detection
   const matchedItems: MatchedItem[] = useMemo(() => {
     const calculated = matchStudentsWithPdfs(students, pdfFiles);
-    return calculated.map((item) => {
+
+    // Map live pdfFiles by normalized name for quick lookup
+    const livePdfMap = new Map<string, LocalPdfFile>();
+    for (const f of pdfFiles) {
+      const key = (f.originalName || f.name).toLowerCase().trim();
+      livePdfMap.set(key, f);
+    }
+
+    const merged = calculated.map((item) => {
       const override = itemOverrides[item.id];
-      if (override) {
-        return { ...item, ...override };
+      if (!override) return item;
+
+      // 1. Check if student data has changed post-approval
+      const currentStudent = item.student;
+      const studentChanged =
+        (override.confirmedStudentPhone !== undefined && override.confirmedStudentPhone !== currentStudent.phone) ||
+        (override.confirmedStudentName !== undefined && override.confirmedStudentName !== currentStudent.studentName) ||
+        (override.confirmedStudentId !== undefined && override.confirmedStudentId !== currentStudent.id);
+
+      // 2. Check if the PDF has changed or no longer exists in pdfFiles
+      let pdfChanged = false;
+      let targetPdf = override.pdfFile !== undefined ? override.pdfFile : item.pdfFile;
+      if (override.confirmedPdfName) {
+        const foundLivePdf = livePdfMap.get(override.confirmedPdfName.toLowerCase().trim());
+        if (!foundLivePdf) {
+          pdfChanged = true;
+          targetPdf = null;
+        } else {
+          const liveHash = foundLivePdf.hash || (foundLivePdf.base64 ? computeQuickHash(foundLivePdf.base64) : undefined);
+          const sizeChanged = override.confirmedPdfSize !== undefined && foundLivePdf.size !== undefined && override.confirmedPdfSize !== foundLivePdf.size;
+          const mtimeChanged = override.confirmedPdfLastModified !== undefined && foundLivePdf.lastModified !== undefined && override.confirmedPdfLastModified !== foundLivePdf.lastModified;
+          const hashChanged = Boolean(override.confirmedPdfHash) && Boolean(liveHash) && override.confirmedPdfHash !== liveHash;
+          if (sizeChanged || mtimeChanged || hashChanged) {
+            pdfChanged = true;
+          }
+        }
+      }
+
+      // 3. Invalidate approval if student or PDF changed
+      if (override.userConfirmed && (studentChanged || pdfChanged)) {
+        return {
+          ...item,
+          ...override,
+          pdfFile: targetPdf,
+          userConfirmed: false,
+          confirmedAt: undefined,
+          needsConfirmation: true,
+          status: !targetPdf ? ('missing_pdf' as MatchingStatus) : ('pending_confirmation' as MatchingStatus),
+          matchReason: studentChanged
+            ? 'Öğrenci veya veli bilgisi değiştiğinden eski onay geçersiz kılındı. Tekrar kontrol ediniz.'
+            : 'PDF karne belgesi veya içeriği değiştiğinden eski onay geçersiz kılındı. Tekrar onaylayınız.',
+        };
+      }
+
+      return { ...item, ...override };
+    });
+
+    // 4. Global Duplicate PDF Conflict Detection:
+    // If two or more students are assigned the exact same PDF (regardless of manual or auto matching)
+    const pdfToStudentIds = new Map<string, string[]>();
+    for (const m of merged) {
+      if (m.pdfFile) {
+        const key = (m.pdfFile.originalName || m.pdfFile.name).toLowerCase().trim();
+        const list = pdfToStudentIds.get(key) || [];
+        list.push(m.id);
+        pdfToStudentIds.set(key, list);
+      }
+    }
+
+    return merged.map((item) => {
+      if (!item.pdfFile) return item;
+      const key = (item.pdfFile.originalName || item.pdfFile.name).toLowerCase().trim();
+      const claimants = pdfToStudentIds.get(key) || [];
+      if (claimants.length > 1) {
+        // Multiple students are assigned the same PDF!
+        return {
+          ...item,
+          hasConflict: true,
+          status: 'pending_confirmation' as MatchingStatus,
+          needsConfirmation: true,
+          matchReason: `ÇAKIŞMA TESPİT EDİLDİ: Bu karne dosyası ${claimants.length} öğrenciye birden atanmış. Yanlış gönderimi önlemek için teyit gereklidir.`,
+        };
       }
       return item;
     });
@@ -547,7 +627,7 @@ export default function App() {
     setIsManualMatchOpen(true);
   };
 
-  const handleAssignPdf = (studentId: string, pdfFile: LocalPdfFile | null) => {
+  const handleAssignPdf = async (studentId: string, pdfFile: LocalPdfFile | null) => {
     if (!pdfFile) {
       setItemOverrides((prev) => ({
         ...prev,
@@ -581,6 +661,27 @@ export default function App() {
     const chosenPdfName = pdfFile.originalName || pdfFile.name;
     const chosenPdfHash = pdfFile.hash || (pdfFile.base64 ? computeQuickHash(pdfFile.base64) : undefined);
 
+    let approvalToken: string | undefined = undefined;
+    if (typeof window !== 'undefined' && window.electronAPI?.dispatch?.confirmMatch && currentItem) {
+      try {
+        const confirmRes = await window.electronAPI.dispatch.confirmMatch({
+          studentId,
+          studentName: currentItem.student.studentName,
+          phone: currentItem.student.phone,
+          examName: config.examName || 'Genel Değerlendirme ve Deneme Sınavı',
+          pdfName: chosenPdfName,
+          pdfPath: pdfFile.path,
+          pdfBase64: pdfFile.base64,
+          userReason: `Kullanıcı manuel ataması: ${chosenPdfName}`,
+        });
+        if (confirmRes.success && confirmRes.token) {
+          approvalToken = confirmRes.token;
+        }
+      } catch (err) {
+        console.warn('Main Process confirmMatch çağrısı başarısız:', err);
+      }
+    }
+
     setItemOverrides((prev) => ({
       ...prev,
       [studentId]: {
@@ -599,6 +700,17 @@ export default function App() {
         confirmedPdfHash: chosenPdfHash,
         confirmedStudentPhone: currentItem?.student.phone,
         confirmedStudentName: currentItem?.student.studentName,
+        matchApprovalFingerprint: computeMatchApprovalFingerprint({
+          studentId,
+          phone: currentItem?.student.phone || '',
+          studentName: currentItem?.student.studentName || '',
+          pdfName: chosenPdfName,
+          pdfSha256: chosenPdfHash,
+          pdfSize: pdfFile.size,
+          pdfLastModified: pdfFile.lastModified,
+          examName: config.examName,
+        }),
+        approvalToken,
         matchReason: `Kullanıcı tarafından manuel olarak atandı (${chosenPdfName})`,
       },
     }));
@@ -610,12 +722,44 @@ export default function App() {
     });
   };
 
-  const handleConfirmMatch = (studentId: string) => {
+  const handleConfirmMatch = async (studentId: string) => {
     const item = matchedItems.find((i) => i.student.id === studentId);
     if (!item) return;
 
     const pdfName = item.pdfFile?.originalName || item.pdfFile?.name;
     const pdfHash = item.pdfFile?.hash || (item.pdfFile?.base64 ? computeQuickHash(item.pdfFile.base64) : undefined);
+
+    let approvalToken: string | undefined = undefined;
+    if (typeof window !== 'undefined' && window.electronAPI?.dispatch?.confirmMatch && item.pdfFile) {
+      try {
+        const confirmRes = await window.electronAPI.dispatch.confirmMatch({
+          studentId,
+          studentName: item.student.studentName,
+          phone: item.student.phone,
+          examName: config.examName || 'Genel Değerlendirme ve Deneme Sınavı',
+          pdfName: pdfName || '',
+          pdfPath: item.pdfFile.path,
+          pdfBase64: item.pdfFile.base64,
+          userReason: 'Kullanıcı onayı',
+        });
+        if (confirmRes.success && confirmRes.token) {
+          approvalToken = confirmRes.token;
+        }
+      } catch (err) {
+        console.warn('Main Process confirmMatch çağrısı başarısız:', err);
+      }
+    }
+
+    const approvalFingerprint = computeMatchApprovalFingerprint({
+      studentId,
+      phone: item.student.phone,
+      studentName: item.student.studentName,
+      pdfName: pdfName || '',
+      pdfSha256: pdfHash,
+      pdfSize: item.pdfFile?.size,
+      pdfLastModified: item.pdfFile?.lastModified,
+      examName: config.examName,
+    });
 
     setItemOverrides((prev) => ({
       ...prev,
@@ -632,6 +776,8 @@ export default function App() {
         confirmedPdfHash: pdfHash,
         confirmedStudentPhone: item.student.phone,
         confirmedStudentName: item.student.studentName,
+        matchApprovalFingerprint: approvalFingerprint,
+        approvalToken,
         matchReason: (item.matchReason || '') + ' (Kullanıcı tarafından onaylandı)',
       },
     }));
@@ -720,9 +866,9 @@ export default function App() {
       ? matchedItems
       : matchedItems.filter((i) => (i.student.group || 'Genel') === selectedGroup);
 
-    // V2 Safety Invariant (P1.1): unknown items MUST NOT be auto-retried in batch queue!
+    // V2 Safety Invariant (P1.2): unknown items and pending_confirmation items MUST NOT be sent in batch queue!
     const itemsToSend = targetItems.filter(
-      (i) => (i.status === 'ready' || i.status === 'pending_confirmation') && i.sendingStatus !== 'unknown'
+      (i) => i.status === 'ready' && i.sendingStatus !== 'unknown' && !i.needsConfirmation
     );
     const examName = customExamName || config.examName || 'Genel Değerlendirme Sınavı';
 
@@ -1021,12 +1167,25 @@ export default function App() {
     const updated = students.map((s) => (s.id === id ? { ...s, ...data } : s));
     setStudents(updated);
     storageService.saveStudents(updated);
+    // Invalidate override on update so modified phone or name requires fresh confirmation
+    setItemOverrides((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
   };
 
   const handleDeleteStudent = (id: string) => {
     const updated = students.filter((s) => s.id !== id);
     setStudents(updated);
     storageService.saveStudents(updated);
+    setItemOverrides((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
   };
 
   const handleBulkAddStudents = (newStudents: Student[]) => {
@@ -1038,11 +1197,13 @@ export default function App() {
   const handleClearAllStudents = () => {
     setStudents([]);
     storageService.clearAllStudents();
+    setItemOverrides({});
   };
 
   const handleResetStudents = () => {
     setStudents([]);
     storageService.clearAllStudents();
+    setItemOverrides({});
   };
 
   // 7. Template Actions
@@ -1224,50 +1385,58 @@ export default function App() {
         )}
 
         {activeTab === 'send' && (
-          <div>
-            {/* Folder Picker */}
-            <FolderSelector
-              folderPath={folderPath}
-              pdfFiles={pdfFiles}
-              onFolderSelected={handleFolderSelected}
-              onLoadSamplePdfs={handleLoadSamplePdfs}
-              onClear={handleClearFolder}
-            />
-
-            {/* Matching Table */}
-            <MatchingTable
-              matchedItems={matchedItems}
-              whatsAppStatus={whatsAppStatus}
-              onStartBatchSend={handleStartBatchSend}
-              onRetrySingleItem={handleRetrySingleItem}
-              onPreviewItem={(item) => {
-                setPreviewItem(item);
-                setIsPreviewOpen(true);
-              }}
-              isSending={isSending}
-              hasFolderSelected={Boolean(folderPath)}
-              templates={templates}
-              activeTemplateId={activeTemplateId}
-              onSelectTemplate={handleSelectTemplate}
-              isOcrScanning={isOcrScanning}
-              ocrProgress={ocrProgress}
-              onStartOcrScan={handleStartOcrScan}
-              isVisualOcrRunning={isVisualOcrRunning}
-              visualOcrProgress={visualOcrProgress}
-              onStartVisualOcr={handleStartVisualOcr}
-              onOpenOcrFailureModal={() => setIsOcrFailureModalOpen(true)}
-              failedOcrCount={failedOcrItems.length}
-              unassignedPdfCount={unassignedPdfCount}
-              selectedGroup={selectedGroup}
-              onSelectGroup={setSelectedGroup}
-              onConfirmMatch={handleConfirmMatch}
-              onOpenManualMatch={handleOpenManualMatch}
-              onOpenReconcile={(item) => {
-                setReconcileItem(item);
-                setIsReconciliationOpen(true);
-              }}
-            />
-          </div>
+          <DispatchWizard
+            currentStep={wizardStep}
+            onStepChange={setWizardStep}
+            students={students}
+            pdfFiles={pdfFiles}
+            matchedItems={matchedItems}
+            folderPath={folderPath}
+            whatsAppStatus={whatsAppStatus}
+            templates={templates}
+            activeTemplateId={activeTemplateId}
+            onSelectTemplate={handleSelectTemplate}
+            onSaveTemplates={handleSaveTemplates}
+            onFolderSelected={handleFolderSelected}
+            onLoadSamplePdfs={handleLoadSamplePdfs}
+            onClearFolder={handleClearFolder}
+            onAddStudent={handleAddStudent}
+            onUpdateStudent={handleUpdateStudent}
+            onDeleteStudent={handleDeleteStudent}
+            onResetStudents={handleResetStudents}
+            onBulkAddStudents={handleBulkAddStudents}
+            onClearAllStudents={handleClearAllStudents}
+            onInitiateImportBackup={handleInitiateImportBackup}
+            onConfirmMatch={handleConfirmMatch}
+            onOpenManualMatch={handleOpenManualMatch}
+            onPreviewItem={(item) => {
+              setPreviewItem(item);
+              setIsPreviewOpen(true);
+            }}
+            onOpenReconcile={(item) => {
+              setReconcileItem(item);
+              setIsReconciliationOpen(true);
+            }}
+            onConfirmSend={(customExam, sendToSec) => {
+              handleConfirmSend(customExam, sendToSec);
+            }}
+            onRetrySingleItem={handleRetrySingleItem}
+            isSending={isSending}
+            config={config}
+            onCheckStatus={() => checkStatus(true)}
+            isCheckingStatus={isCheckingStatus}
+            isOcrScanning={isOcrScanning}
+            ocrProgress={ocrProgress}
+            onStartOcrScan={handleStartOcrScan}
+            isVisualOcrRunning={isVisualOcrRunning}
+            visualOcrProgress={visualOcrProgress}
+            onStartVisualOcr={handleStartVisualOcr}
+            onOpenOcrFailureModal={() => setIsOcrFailureModalOpen(true)}
+            failedOcrCount={failedOcrItems.length}
+            unassignedPdfCount={unassignedPdfCount}
+            selectedGroup={selectedGroup}
+            onSelectGroup={setSelectedGroup}
+          />
         )}
 
         {activeTab === 'students' && (

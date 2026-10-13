@@ -99,6 +99,13 @@ export interface ElectronDispatchReserveParams {
   pdfBase64?: string;
   provider: string;
   id?: string;
+  pdfSha256?: string;
+  userConfirmed?: boolean;
+  needsConfirmation?: boolean;
+  hasConflict?: boolean;
+  confidenceScore?: number;
+  matchApprovalFingerprint?: string;
+  approvalToken?: string;
 }
 
 export interface ElectronDispatchReserveResult {
@@ -168,6 +175,12 @@ export interface ElectronDispatchSendRequest {
   caption?: string;
   messageText?: string;
   confirmationToken?: string;
+  userConfirmed?: boolean;
+  needsConfirmation?: boolean;
+  hasConflict?: boolean;
+  confidenceScore?: number;
+  matchApprovalFingerprint?: string;
+  approvalToken?: string;
   openwaConfig?: { baseUrl?: string; sessionId?: string };
   metaConfig?: { phoneNumberId?: string };
   mockShouldTimeout?: boolean;
@@ -192,6 +205,23 @@ export interface ElectronDispatchSendResult {
 
 export interface ElectronDispatchAPI {
   send: (request: ElectronDispatchSendRequest) => Promise<ElectronDispatchSendResult>;
+  confirmMatch: (payload: {
+    studentId: string;
+    studentName: string;
+    phone: string;
+    examName: string;
+    pdfName: string;
+    pdfPath?: string;
+    pdfBase64?: string;
+    userReason?: string;
+  }) => Promise<{
+    success: boolean;
+    token?: string;
+    fingerprint?: string;
+    dispatchKey?: string;
+    pdfSha256?: string;
+    error?: string;
+  }>;
   reserve: (
     params: ElectronDispatchReserveParams,
     options?: { confirmationToken?: string; allowUnknownRetry?: boolean }

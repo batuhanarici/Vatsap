@@ -448,4 +448,349 @@ describe('Vatsap V2 — P1.1: SQLite Geçmiş Entegrasyonu ve Güvenli Unknown U
     expect(record.id).toBe('disp_1201');
     expect(record.manual_reconciliation_status).toBeNull();
   });
+
+  // -------------------------------------------------------------------------
+  // Senaryo 13: Uzlaştırma işlemi tek bir SQLite transaction içinde atomiktir
+  // -------------------------------------------------------------------------
+  it('Senaryo 13: Uzlaştırma işlemi tek bir SQLite transaction içinde atomiktir; denetim kaydı başarısız olursa dispatches tablosu rollback edilir', async () => {
+    repo.createDispatch({
+      id: 'disp_1301',
+      dispatch_key: 'key_1301',
+      student_id: 'std_1301',
+      student_name: 'Kerem Yılmaz',
+      phone: '905321110001',
+      exam_name: 'Deneme 13',
+      pdf_name: 'Kerem Yılmaz.pdf',
+      pdf_sha256: 'a1'.repeat(32),
+      provider: 'meta_cloud',
+      status: 'unknown',
+    });
+
+    // Mock a failure on the second db.run (the audit INSERT)
+    const originalRun = repo.db.run.bind(repo.db);
+    let insertCount = 0;
+    vi.spyOn(repo.db, 'run').mockImplementation((...args: any[]) => {
+      const sql = args[0];
+      if (typeof sql === 'string' && sql.includes('INSERT INTO reconciliation_audit')) {
+        insertCount++;
+        throw new Error('SIMULATED_SQLITE_AUDIT_INSERT_FAILURE');
+      }
+      return (originalRun as any)(...args);
+    });
+
+    expect(() => {
+      repo.reconcileManual({
+        dispatchKey: 'key_1301',
+        action: 'confirm_delivered',
+        userReason: 'Test amaçlı uzlaştırma',
+      });
+    }).toThrow('SIMULATED_SQLITE_AUDIT_INSERT_FAILURE');
+
+    // Restore spy
+    vi.restoreAllMocks();
+
+    // Verify rollback: dispatches table must NOT have been updated
+    const record = repo.getDispatchByKey('key_1301');
+    expect(record.status).toBe('unknown');
+    expect(record.manual_reconciliation_status).toBeNull();
+    expect(record.reconciliation_reason).toBeNull();
+
+    // Audit table must have 0 records
+    const audits = repo.getReconciliationAudit('key_1301');
+    expect(audits.length).toBe(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // Senaryo 14: Veli teyidiyle ("user_confirmed_delivered") uzlaştırılmış kayıt için authorize_retry engellenir
+  // -------------------------------------------------------------------------
+  it('Senaryo 14: Veli teyidiyle teslimat onaylanmış bir kayıt için authorize_retry yetkisiz kabul edilip engellenir', async () => {
+    repo.createDispatch({
+      id: 'disp_1401',
+      dispatch_key: 'key_1401',
+      student_id: 'std_1401',
+      student_name: 'Selin Kaya',
+      phone: '905332220002',
+      exam_name: 'Deneme 14',
+      pdf_name: 'Selin Kaya.pdf',
+      pdf_sha256: 'b2'.repeat(32),
+      provider: 'openwa',
+      status: 'unknown',
+    });
+
+    // Step 1: Reconcile as delivered
+    repo.reconcileManual({
+      dispatchKey: 'key_1401',
+      action: 'confirm_delivered',
+      userReason: 'Veliyle telefonla görüşüldü, karnenin ulaştığı teyit edildi.',
+    });
+
+    // Step 2: Attempting to authorize retry on an already confirmed delivery must fail
+    expect(() => {
+      repo.reconcileManual({
+        dispatchKey: 'key_1401',
+        action: 'authorize_retry',
+        userReason: 'Tekrar gönderim denemesi',
+      });
+    }).toThrow('teslimat daha önce veli teyidiyle');
+  });
+
+  // -------------------------------------------------------------------------
+  // Senaryo 15: Tekrarlanan token üretiminde eski tokenlar iptal edilir (at most 1 active token)
+  // -------------------------------------------------------------------------
+  it('Senaryo 15: Aynı dispatch için tekrarlanan token üretiminde önceki aktif token iptal edilir', async () => {
+    repo.createDispatch({
+      id: 'disp_1501',
+      dispatch_key: 'key_1501',
+      student_id: 'std_1501',
+      student_name: 'Hakan Demir',
+      phone: '905343330003',
+      exam_name: 'Deneme 15',
+      pdf_name: 'Hakan Demir.pdf',
+      pdf_sha256: 'c3'.repeat(32),
+      provider: 'openwa',
+      status: 'unknown',
+    });
+
+    const token1 = repo.createUnknownRetryToken('key_1501').token;
+    const token2 = repo.createUnknownRetryToken('key_1501').token;
+
+    expect(token1).not.toBe(token2);
+
+    // Old token must now be invalid
+    const isOldValid = repo.verifyAndConsumeUnknownRetryToken(token1, 'key_1501');
+    expect(isOldValid).toBe(false);
+
+    // New token must be valid
+    const isNewValid = repo.verifyAndConsumeUnknownRetryToken(token2, 'key_1501');
+    expect(isNewValid).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // Senaryo 16: Aynı retry token ile eşzamanlı iki gönderim isteğinde yalnızca biri rezervasyon alabilir
+  // -------------------------------------------------------------------------
+  it('Senaryo 16: Aynı retry token ile eşzamanlı iki istek geldiğinde yalnızca ilki rezervasyon alır', async () => {
+    const key16 = computeDeterministicDispatchKey({
+      studentId: 'std_1601',
+      examName: 'Deneme 16',
+      phone: '905354440004',
+      pdfSha256: 'd4'.repeat(32),
+    });
+
+    repo.createDispatch({
+      id: 'disp_1601',
+      dispatch_key: key16,
+      student_id: 'std_1601',
+      student_name: 'Buse Arslan',
+      phone: '905354440004',
+      exam_name: 'Deneme 16',
+      pdf_name: 'Buse Arslan.pdf',
+      pdf_sha256: 'd4'.repeat(32),
+      provider: 'meta_cloud',
+      status: 'unknown',
+    });
+
+    const authRes = repo.reconcileManual({
+      dispatchKey: key16,
+      action: 'authorize_retry',
+      userReason: 'Veliye karne ulaşmamış, yeniden gönderim talep edildi.',
+    });
+    const token = authRes.retryToken;
+
+    const reqPayload = {
+      studentId: 'std_1601',
+      studentName: 'Buse Arslan',
+      phone: '905354440004',
+      examName: 'Deneme 16',
+      pdfName: 'Buse Arslan.pdf',
+      pdfSha256: 'd4'.repeat(32),
+      provider: 'meta_cloud',
+    };
+
+    // Call 1
+    const res1 = repo.reserveDispatch(reqPayload, { confirmationToken: token, isFromRenderer: true });
+    // Call 2 with identical token
+    const res2 = repo.reserveDispatch(reqPayload, { confirmationToken: token, isFromRenderer: true });
+
+    expect(res1.allowed).toBe(true);
+    expect(res2.allowed).toBe(false);
+    expect(res2.code).toBe('IN_PROGRESS'); // Since status is now sending
+  });
+
+  // -------------------------------------------------------------------------
+  // Senaryo 17: P0 v1 veritabanından v2ye geçişte mevcut tüm kayıtlar ve indeksler korunur
+  // -------------------------------------------------------------------------
+  it('Senaryo 17: P0 v1 şemasıyla oluşturulmuş veritabanı Migration 2 çalıştırıldığında veri kaybı yaşamaz', async () => {
+    const v1DbPath = path.join(tempDir, 'v1_legacy.db');
+    // Simulate v1 repo that only has Migration 1
+    const initSql = await import('sql.js');
+    const SQL = await initSql.default({
+      locateFile: () => path.join(__dirname, '../node_modules/sql.js/dist/sql-wasm.wasm'),
+    });
+    const rawDb = new SQL.Database();
+
+    // Run Migration 1
+    MIGRATIONS[0].up(rawDb);
+    rawDb.run(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        version INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        applied_at TEXT NOT NULL
+      );
+    `);
+    rawDb.run(`INSERT INTO schema_migrations VALUES (1, '001_initial_schema', '2026-10-01T00:00:00Z');`);
+
+    // Insert pre-existing v1 rows
+    rawDb.run(`
+      INSERT INTO dispatches (
+        id, dispatch_key, student_id, student_name, phone, exam_name, pdf_name, pdf_sha256, provider, status, retry_count, created_at, updated_at
+      ) VALUES (
+        'legacy_1', 'legacy_key_1', 'std_legacy_1', 'Eski Öğrenci', '905300000001', 'Eski Sınav', 'Eski.pdf', '${'e'.repeat(64)}', 'openwa', 'sent', 0, '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z'
+      );
+    `);
+
+    // Save v1 db to disk
+    const data = rawDb.export();
+    fs.writeFileSync(v1DbPath, Buffer.from(data));
+    rawDb.close();
+
+    // Now open with DispatchRepository (which executes Migration 2 automatically)
+    const upgradedRepo = new DispatchRepository({
+      storageDir: tempDir,
+      dbFileName: 'v1_legacy.db',
+    });
+    await upgradedRepo.init();
+
+    // Verify legacy record is intact
+    const legacyRecord = upgradedRepo.getDispatchByKey('legacy_key_1');
+    expect(legacyRecord).toBeDefined();
+    expect(legacyRecord.student_name).toBe('Eski Öğrenci');
+    expect(legacyRecord.status).toBe('sent');
+    expect(legacyRecord.manual_reconciliation_status).toBeNull();
+
+    // Verify reconciliation_audit table exists and works
+    const audits = upgradedRepo.getReconciliationAudit('legacy_key_1');
+    expect(audits).toEqual([]);
+
+    upgradedRepo.close();
+  });
+
+  // -------------------------------------------------------------------------
+  // Senaryo 18: IPC -> Repository -> Rezervasyon Uçtan Uca Doğrulama
+  // -------------------------------------------------------------------------
+  it('Senaryo 18: IPC üzerinden uzlaştırma, tek kullanımlık token üretimi, rezervasyon kapısı ve DTO projeksiyonu uçtan uca çalışır', async () => {
+    const dispatchKey18 = computeDeterministicDispatchKey({
+      studentId: 'std_ipc_18',
+      examName: 'IPC Uctan Uca Sınavı',
+      phone: '905391234567',
+      pdfSha256: 'f5'.repeat(32),
+    });
+
+    // Initial dispatch in unknown state
+    repo.createDispatch({
+      id: 'disp_ipc_18',
+      dispatch_key: dispatchKey18,
+      student_id: 'std_ipc_18',
+      student_name: 'Deniz Gök',
+      phone: '905391234567',
+      exam_name: 'IPC Uctan Uca Sınavı',
+      pdf_name: 'Deniz Gök.pdf',
+      pdf_sha256: 'f5'.repeat(32),
+      provider: 'meta_cloud',
+      status: 'unknown',
+      last_error: 'ETIMEDOUT',
+    });
+
+    // 1. Simüle edilen Main Process dispatch:reconcileManual IPC işleyicisi
+    const handleIpcReconcile = async (payload: any) => {
+      const { dispatchKey, action, userReason } = payload || {};
+      return repo.reconcileManual({ dispatchKey, action, userReason });
+    };
+
+    // 2. Simüle edilen Main Process dispatch:send IPC işleyicisi
+    const handleIpcSend = async (request: any) => {
+      const { studentId, studentName, phone, examName, pdfName, pdfSha256, provider, confirmationToken } = request;
+      const reservation = repo.reserveDispatch(
+        { studentId, studentName, phone, examName, pdfName, pdfSha256, provider },
+        { confirmationToken, isFromRenderer: true }
+      );
+      if (!reservation.allowed) {
+        return { success: false, allowed: false, code: reservation.code, reason: reservation.reason };
+      }
+      return { success: true, allowed: true, dispatchKey: reservation.dispatchKey };
+    };
+
+    // 3. Simüle edilen Main Process dispatch:getAll IPC işleyicisi
+    const handleIpcGetAll = async (options: any) => {
+      const result = repo.getAllDispatches(options || {});
+      const sanitized = result.rows.map((row: any) => ({
+        id: row.id,
+        dispatchKey: row.dispatch_key,
+        studentId: row.student_id,
+        studentName: row.student_name,
+        phone: row.phone,
+        examName: row.exam_name,
+        pdfFileName: row.pdf_name,
+        provider: row.provider,
+        status: row.status,
+        date: row.created_at,
+        manualReconciliationStatus: row.manual_reconciliation_status,
+      }));
+      return { success: true, dispatches: sanitized, totalCount: result.totalCount };
+    };
+
+    // Adım A: Token olmadan doğrudan gönderim denenir -> Reddedilir
+    const directSend = await handleIpcSend({
+      studentId: 'std_ipc_18',
+      studentName: 'Deniz Gök',
+      phone: '905391234567',
+      examName: 'IPC Uctan Uca Sınavı',
+      pdfName: 'Deniz Gök.pdf',
+      pdfSha256: 'f5'.repeat(32),
+      provider: 'meta_cloud',
+    });
+    expect(directSend.allowed).toBe(false);
+    expect(directSend.code).toBe('UNKNOWN_DELIVERY');
+
+    // Adım B: IPC üzerinden yetkili uzlaştırma çağrılır
+    const reconcileResult = await handleIpcReconcile({
+      dispatchKey: dispatchKey18,
+      action: 'authorize_retry',
+      userReason: 'Veli ile görüşüldü, karne ulaşmamış.',
+    });
+    expect(reconcileResult.success).toBe(true);
+    expect(reconcileResult.retryToken).toBeDefined();
+
+    // Adım C: Alınan token ile gönderim rezervasyonu yapılır -> Başarılı
+    const authorizedSend = await handleIpcSend({
+      studentId: 'std_ipc_18',
+      studentName: 'Deniz Gök',
+      phone: '905391234567',
+      examName: 'IPC Uctan Uca Sınavı',
+      pdfName: 'Deniz Gök.pdf',
+      pdfSha256: 'f5'.repeat(32),
+      provider: 'meta_cloud',
+      confirmationToken: reconcileResult.retryToken,
+    });
+    expect(authorizedSend.allowed).toBe(true);
+
+    // Adım D: Aynı token tekrar kullanılmaya çalışılır -> Token tüketildiği için reddedilir
+    const replaySend = await handleIpcSend({
+      studentId: 'std_ipc_18',
+      studentName: 'Deniz Gök',
+      phone: '905391234567',
+      examName: 'IPC Uctan Uca Sınavı',
+      pdfName: 'Deniz Gök.pdf',
+      pdfSha256: 'f5'.repeat(32),
+      provider: 'meta_cloud',
+      confirmationToken: reconcileResult.retryToken,
+    });
+    expect(replaySend.allowed).toBe(false);
+
+    // Adım E: dispatch:getAll ile geçmiş listelenir -> Projeksiyon güvenli
+    const allDispatches = await handleIpcGetAll({ examName: 'IPC Uctan Uca Sınavı' });
+    expect(allDispatches.success).toBe(true);
+    expect(allDispatches.dispatches.length).toBe(1);
+    expect(allDispatches.dispatches[0].manualReconciliationStatus).toBe('retry_authorized');
+    expect((allDispatches.dispatches[0] as any).pdf_sha256).toBeUndefined();
+  });
 });

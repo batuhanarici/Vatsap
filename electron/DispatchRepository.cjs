@@ -205,6 +205,8 @@ class DispatchRepository {
     this.SQL = null;
     this.isLoaded = false;
     this.unknownRetryTokens = new Map();
+    this.matchApprovals = new Map();
+    this.matchApprovalsByKey = new Map();
   }
 
   setStorageDir(dirPath) {
@@ -435,6 +437,14 @@ class DispatchRepository {
 
     const token = crypto.randomBytes(24).toString('hex');
     const expiresAt = Date.now() + 5 * 60 * 1000; // 5 dakika geçerli
+
+    // Security invariant: Invalidate any previous unconsumed tokens for this dispatchKey
+    for (const [existingToken, info] of this.unknownRetryTokens.entries()) {
+      if (info.dispatchKey === dispatchKey) {
+        this.unknownRetryTokens.delete(existingToken);
+      }
+    }
+
     this.unknownRetryTokens.set(token, {
       dispatchKey,
       expiresAt,
@@ -468,6 +478,151 @@ class DispatchRepository {
     }
 
     return true;
+  }
+
+  /**
+   * Registers an authoritative user match confirmation in Main Process (P1.2.2).
+   * Generates a cryptographically secure token bound to studentId, cleanPhone, examName, and pdfSha256.
+   */
+  registerMatchApproval(params) {
+    const { studentId, studentName, phone, examName, pdfName, pdfSha256, userReason } = params || {};
+    if (!studentId || typeof studentId !== 'string') {
+      throw new Error('registerMatchApproval: studentId zorunludur.');
+    }
+    if (!studentName || typeof studentName !== 'string') {
+      throw new Error('registerMatchApproval: studentName zorunludur.');
+    }
+    if (!phone || typeof phone !== 'string') {
+      throw new Error('registerMatchApproval: phone zorunludur.');
+    }
+    if (!examName || typeof examName !== 'string') {
+      throw new Error('registerMatchApproval: examName zorunludur.');
+    }
+    if (!pdfName || typeof pdfName !== 'string') {
+      throw new Error('registerMatchApproval: pdfName zorunludur.');
+    }
+    if (!pdfSha256 || typeof pdfSha256 !== 'string') {
+      throw new Error('registerMatchApproval: pdfSha256 zorunludur.');
+    }
+
+    const cleanPhone = normalizeRecipientPhone(phone);
+    const normalizedSha = pdfSha256.trim().toLowerCase();
+    const dispatchKey = computeDeterministicDispatchKey({
+      studentId: studentId.trim(),
+      examName: examName.trim(),
+      phone: cleanPhone,
+      pdfSha256: normalizedSha,
+    });
+
+    // Check if an unconsumed active approval already exists for this dispatchKey
+    const existingToken = this.matchApprovalsByKey.get(dispatchKey);
+    if (existingToken) {
+      const existing = this.matchApprovals.get(existingToken);
+      if (existing && !existing.consumed && existing.expiresAt > Date.now()) {
+        return {
+          success: true,
+          token: existing.token,
+          fingerprint: existing.fingerprint,
+          dispatchKey,
+          pdfSha256: normalizedSha,
+          isExisting: true,
+        };
+      }
+    }
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const fingerprint = crypto.createHash('sha256').update(
+      `${studentId.trim()}::${cleanPhone}::${studentName.trim().toLowerCase()}::${pdfName.trim().toLowerCase()}::${normalizedSha}::${examName.trim().toLowerCase()}::${token}`
+    ).digest('hex');
+
+    const approvalRecord = {
+      token,
+      fingerprint,
+      dispatchKey,
+      studentId: studentId.trim(),
+      studentName: studentName.trim(),
+      phone: cleanPhone,
+      examName: examName.trim(),
+      pdfName: pdfName.trim(),
+      pdfSha256: normalizedSha,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24 hours validity
+      consumed: false,
+      userReason: (userReason || 'Kullanıcı onayı').trim(),
+    };
+
+    this.matchApprovals.set(token, approvalRecord);
+    this.matchApprovalsByKey.set(dispatchKey, token);
+
+    return {
+      success: true,
+      token,
+      fingerprint,
+      dispatchKey,
+      pdfSha256: normalizedSha,
+    };
+  }
+
+  /**
+   * Authoritatively verifies and consumes a match approval token in Main Process (P1.2.2).
+   */
+  verifyAndConsumeMatchApproval(token, expectedParams) {
+    if (!token || typeof token !== 'string') {
+      return { valid: false, code: 'APPROVAL_REQUIRED', reason: 'Onay belirteci (token) eksik.' };
+    }
+
+    const approval = this.matchApprovals.get(token);
+    if (!approval) {
+      return { valid: false, code: 'APPROVAL_NOT_FOUND', reason: 'Geçersiz veya bulunamayan onay belirteci.' };
+    }
+
+    if (approval.consumed) {
+      return { valid: false, code: 'APPROVAL_CONSUMED', reason: 'Bu onay belirteci daha önce kullanılmış.' };
+    }
+
+    if (Date.now() > approval.expiresAt) {
+      return { valid: false, code: 'APPROVAL_EXPIRED', reason: 'Onay belirtecinin süresi dolmuş.' };
+    }
+
+    const { studentId, phone, examName, pdfSha256 } = expectedParams || {};
+    const cleanPhone = normalizeRecipientPhone(phone);
+    const normalizedSha = (pdfSha256 || '').trim().toLowerCase();
+
+    if (approval.studentId !== (studentId || '').trim()) {
+      return { valid: false, code: 'APPROVAL_MISMATCH', reason: 'Onay belirteci başka bir öğrenciye ait.' };
+    }
+
+    if (approval.phone !== cleanPhone) {
+      return { valid: false, code: 'APPROVAL_MISMATCH', reason: 'Onay belirteci başka bir veli telefonuna ait.' };
+    }
+
+    if (approval.examName !== (examName || '').trim()) {
+      return { valid: false, code: 'APPROVAL_MISMATCH', reason: 'Onay belirteci başka bir sınava ait.' };
+    }
+
+    if (approval.pdfSha256 !== normalizedSha) {
+      return { valid: false, code: 'MATCH_CHANGED_AFTER_APPROVAL', reason: 'Onay verildikten sonra PDF içeriği değişmiştir (SHA-256 uyuşmazlığı).' };
+    }
+
+    // Mark as consumed on reservation
+    approval.consumed = true;
+    approval.consumedAt = Date.now();
+
+    return { valid: true, approval };
+  }
+
+  /**
+   * Retrieves an active match approval by dispatchKey if available.
+   */
+  getMatchApprovalByKey(dispatchKey) {
+    if (!dispatchKey) return null;
+    const token = this.matchApprovalsByKey.get(dispatchKey);
+    if (!token) return null;
+    const approval = this.matchApprovals.get(token);
+    if (!approval || approval.consumed || Date.now() > approval.expiresAt) {
+      return null;
+    }
+    return approval;
   }
 
   // =========================================================================
@@ -887,6 +1042,12 @@ class DispatchRepository {
       );
     }
 
+    if (existing.manual_reconciliation_status === 'user_confirmed_delivered') {
+      throw new Error(
+        'reconcileManual: Bu kayıt için teslimat daha önce veli teyidiyle ("user_confirmed_delivered") onaylanmıştır. Yeniden gönderim yetkilendirilemez.'
+      );
+    }
+
     const nowIso = new Date().toISOString();
     const cleanReason = userReason.trim();
     const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -895,26 +1056,35 @@ class DispatchRepository {
       // Action A: User confirmed delivery
       // Core status remains 'unknown' because provider proof does not exist;
       // manual_reconciliation_status is set to 'user_confirmed_delivered'.
-      this.db.run(
-        `
-        UPDATE dispatches
-        SET manual_reconciliation_status = 'user_confirmed_delivered',
-            reconciled_at = ?,
-            reconciliation_reason = ?,
-            updated_at = ?
-        WHERE dispatch_key = ?;
-        `,
-        [nowIso, cleanReason, nowIso, dispatchKey]
-      );
+      try {
+        this.db.run('BEGIN TRANSACTION;');
+        this.db.run(
+          `
+          UPDATE dispatches
+          SET manual_reconciliation_status = 'user_confirmed_delivered',
+              reconciled_at = ?,
+              reconciliation_reason = ?,
+              updated_at = ?
+          WHERE dispatch_key = ?;
+          `,
+          [nowIso, cleanReason, nowIso, dispatchKey]
+        );
 
-      this.db.run(
-        `
-        INSERT INTO reconciliation_audit (
-          id, dispatch_key, previous_status, action, user_reason, created_at, retry_token_id
-        ) VALUES (?, ?, ?, ?, ?, ?, NULL);
-        `,
-        [auditId, dispatchKey, existing.status, 'confirm_delivered', cleanReason, nowIso]
-      );
+        this.db.run(
+          `
+          INSERT INTO reconciliation_audit (
+            id, dispatch_key, previous_status, action, user_reason, created_at, retry_token_id
+          ) VALUES (?, ?, ?, ?, ?, ?, NULL);
+          `,
+          [auditId, dispatchKey, existing.status, 'confirm_delivered', cleanReason, nowIso]
+        );
+        this.db.run('COMMIT;');
+      } catch (txErr) {
+        try {
+          this.db.run('ROLLBACK;');
+        } catch (_) {}
+        throw txErr;
+      }
 
       this.saveToDisk();
 
@@ -931,26 +1101,36 @@ class DispatchRepository {
       // Action B: User confirmed message did not reach; authorize retry with single-use token
       const tokenInfo = this.createUnknownRetryToken(dispatchKey);
 
-      this.db.run(
-        `
-        UPDATE dispatches
-        SET manual_reconciliation_status = 'retry_authorized',
-            reconciled_at = ?,
-            reconciliation_reason = ?,
-            updated_at = ?
-        WHERE dispatch_key = ?;
-        `,
-        [nowIso, cleanReason, nowIso, dispatchKey]
-      );
+      try {
+        this.db.run('BEGIN TRANSACTION;');
+        this.db.run(
+          `
+          UPDATE dispatches
+          SET manual_reconciliation_status = 'retry_authorized',
+              reconciled_at = ?,
+              reconciliation_reason = ?,
+              updated_at = ?
+          WHERE dispatch_key = ?;
+          `,
+          [nowIso, cleanReason, nowIso, dispatchKey]
+        );
 
-      this.db.run(
-        `
-        INSERT INTO reconciliation_audit (
-          id, dispatch_key, previous_status, action, user_reason, created_at, retry_token_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?);
-        `,
-        [auditId, dispatchKey, existing.status, 'authorize_retry', cleanReason, nowIso, tokenInfo.token]
-      );
+        this.db.run(
+          `
+          INSERT INTO reconciliation_audit (
+            id, dispatch_key, previous_status, action, user_reason, created_at, retry_token_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?);
+          `,
+          [auditId, dispatchKey, existing.status, 'authorize_retry', cleanReason, nowIso, tokenInfo.token]
+        );
+        this.db.run('COMMIT;');
+      } catch (txErr) {
+        try {
+          this.db.run('ROLLBACK;');
+        } catch (_) {}
+        this.unknownRetryTokens.delete(tokenInfo.token);
+        throw txErr;
+      }
 
       this.saveToDisk();
 
@@ -1045,6 +1225,51 @@ class DispatchRepository {
       phone,
       pdfSha256,
     });
+
+    // Safety & Confirmation Invariants: Unconfirmed or low confidence matches cannot be reserved (P0-3A / P1.2.1 / P1.2.2)
+    if (params.confidenceScore !== undefined && typeof params.confidenceScore === 'number' && params.confidenceScore < 70) {
+      return {
+        allowed: false,
+        code: 'LOW_MATCH_CONFIDENCE',
+        reason: 'Eşleştirme güven skoru %70 altında olan belgeler Main Process güvenlik kapısı tarafından engellendi.',
+        dispatchKey,
+      };
+    }
+
+    const requiresConfirmation = Boolean(
+      params.hasConflict ||
+      params.needsConfirmation ||
+      (params.confidenceScore !== undefined && params.confidenceScore < 95)
+    );
+
+    if (requiresConfirmation) {
+      const token = options?.approvalToken || params.approvalToken;
+      if (token) {
+        const verifyRes = this.verifyAndConsumeMatchApproval(token, {
+          studentId,
+          phone,
+          examName,
+          pdfSha256,
+        });
+        if (!verifyRes.valid) {
+          return {
+            allowed: false,
+            code: verifyRes.code || 'APPROVAL_REQUIRED',
+            reason: verifyRes.reason || 'Geçersiz onay belirteci.',
+            dispatchKey,
+          };
+        }
+      } else {
+        // Without an authoritative Main Process approval token, reservation cannot proceed for records requiring confirmation.
+        // Even if userConfirmed: true is passed from Renderer, it cannot bypass the Main Process approval registry.
+        return {
+          allowed: false,
+          code: 'APPROVAL_REQUIRED',
+          reason: 'Onay bekleyen veya çakışmalı eşleşmeler için Main Process kullanıcı onayı zorunludur. (kullanıcı onayı olmadan gönderilemez)',
+          dispatchKey,
+        };
+      }
+    }
 
     const existing = this.getDispatchByKey(dispatchKey);
 

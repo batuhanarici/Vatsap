@@ -340,6 +340,102 @@ function validateDockerHealthOptions(options) {
   return safeOptions;
 }
 
+/**
+ * Turkish Character and String Normalizer (CommonJS)
+ */
+function normalizeTurkishText(text) {
+  if (!text) return '';
+  return String(text)
+    .replace(/İ/g, 'i')
+    .replace(/I/g, 'i')
+    .replace(/ı/g, 'i')
+    .replace(/Ğ/g, 'g')
+    .replace(/ğ/g, 'g')
+    .replace(/Ü/g, 'u')
+    .replace(/ü/g, 'u')
+    .replace(/Ş/g, 's')
+    .replace(/ş/g, 's')
+    .replace(/Ö/g, 'o')
+    .replace(/ö/g, 'o')
+    .replace(/Ç/g, 'c')
+    .replace(/ç/g, 'c')
+    .toLowerCase()
+    .trim();
+}
+
+/**
+ * Normalizes text for filename and student name comparison
+ */
+function simplifyForComparison(text) {
+  const normalized = normalizeTurkishText(text);
+  const withoutExt = normalized.replace(/\.pdf$/i, '');
+  return withoutExt
+    .replace(/[_\-–—.]+/g, ' ')
+    .replace(/[^a-z0-9 ]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Authoritatively calculates match confidence score between student name and PDF filename in Main Process (0-100)
+ */
+function calculateMatchScore(studentName, pdfFileName) {
+  const cleanStudent = simplifyForComparison(studentName);
+  const cleanFile = simplifyForComparison(pdfFileName);
+
+  if (!cleanStudent || !cleanFile) {
+    return { score: 0, reason: 'İsim veya dosya adı boş' };
+  }
+
+  if (cleanStudent === cleanFile) {
+    return { score: 100, reason: 'Tam İsim Eşleşmesi (%100)' };
+  }
+
+  if (cleanFile.startsWith(cleanStudent)) {
+    return { score: 95, reason: 'İsimle Başlayan Dosya (%95)' };
+  }
+
+  if (cleanFile.includes(cleanStudent)) {
+    return { score: 90, reason: 'İçinde Tam İsim Geçiyor (%90)' };
+  }
+
+  const studentTokens = cleanStudent.split(' ').filter((t) => t.length > 1);
+  const fileTokens = cleanFile.split(' ').filter((t) => t.length > 1);
+
+  if (studentTokens.length > 0) {
+    const matchedCount = studentTokens.filter((st) =>
+      fileTokens.some((ft) => ft === st || ft.includes(st))
+    ).length;
+
+    if (matchedCount === studentTokens.length) {
+      return { score: 85, reason: 'Tüm İsim Parçaları Eşleşti (%85)' };
+    }
+
+    if (studentTokens.length >= 2 && matchedCount >= studentTokens.length - 1) {
+      return { score: 60, reason: 'Kısmi İsim Eşleşmesi (%60)' };
+    }
+  }
+
+  return { score: 0, reason: 'Eşleşme Bulunamadı' };
+}
+
+/**
+ * Computes deterministic SHA-256 approval fingerprint for Main Process
+ */
+function computeMatchApprovalFingerprint({ studentId, phone, studentName, pdfName, pdfSha256, examName }) {
+  const crypto = require('crypto');
+  const cleanPhone = String(phone || '').replace(/\D/g, '');
+  const canonical = [
+    String(studentId || '').trim(),
+    cleanPhone,
+    String(studentName || '').trim().toLowerCase(),
+    String(pdfName || '').trim().toLowerCase(),
+    String(pdfSha256 || '').trim().toLowerCase(),
+    String(examName || '').trim().toLowerCase(),
+  ].join('::');
+  return crypto.createHash('sha256').update(canonical, 'utf8').digest('hex');
+}
+
 module.exports = {
   MAX_PDF_SIZE_BYTES,
   ALLOWED_OPENWA_PORT,
@@ -350,4 +446,8 @@ module.exports = {
   validatePdfPath,
   validateOpenWaRequest,
   validateDockerHealthOptions,
+  normalizeTurkishText,
+  simplifyForComparison,
+  calculateMatchScore,
+  computeMatchApprovalFingerprint,
 };

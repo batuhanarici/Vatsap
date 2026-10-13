@@ -64,6 +64,34 @@ export function buildDispatchKey(studentId: string, examName?: string, pdfName?:
 }
 
 /**
+ * Computes an immutable, deterministic fingerprint for a match approval.
+ * Binds studentId, normalized phone, studentName, PDF identifier, PDF hash/size/mtime, and examName.
+ */
+export function computeMatchApprovalFingerprint(params: {
+  studentId: string;
+  phone: string;
+  studentName?: string;
+  pdfName: string;
+  pdfSha256?: string;
+  pdfSize?: number;
+  pdfLastModified?: number;
+  examName?: string;
+}): string {
+  const cleanPhone = (params.phone || '').replace(/\D/g, '');
+  const canonical = [
+    (params.studentId || '').trim(),
+    cleanPhone,
+    (params.studentName || '').trim().toLowerCase(),
+    (params.pdfName || '').trim().toLowerCase(),
+    (params.pdfSha256 || '').trim().toLowerCase(),
+    String(params.pdfSize || 0),
+    String(params.pdfLastModified || 0),
+    (params.examName || '').trim().toLowerCase(),
+  ].join('::');
+  return computeQuickHash(canonical);
+}
+
+/**
  * Vatsap V2 — Central Dispatch Safety Gate (P0-3A / P0-3A.1)
  * 
  * Verifies every dispatch item right before transmission to prevent:
@@ -172,6 +200,21 @@ export function evaluateDispatchSafety(
       Boolean(item.confirmedStudentName) &&
       item.confirmedStudentName !== student.studentName;
 
+    const currentFingerprint = computeMatchApprovalFingerprint({
+      studentId: student.id,
+      phone: rawPhone,
+      studentName: student.studentName,
+      pdfName: currentPdfIdentifier,
+      pdfSha256: currentHash,
+      pdfSize: pdfFile.size,
+      pdfLastModified: pdfFile.lastModified,
+      examName: options.examName,
+    });
+
+    const hasFingerprintMismatch =
+      Boolean(item.matchApprovalFingerprint) &&
+      item.matchApprovalFingerprint !== currentFingerprint;
+
     if (
       hasStudentIdChanged ||
       hasPdfChanged ||
@@ -179,7 +222,8 @@ export function evaluateDispatchSafety(
       hasPdfLastModifiedChanged ||
       hasPdfHashChanged ||
       hasPhoneChanged ||
-      hasStudentNameChanged
+      hasStudentNameChanged ||
+      hasFingerprintMismatch
     ) {
       return {
         allowed: false,

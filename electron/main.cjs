@@ -17,6 +17,7 @@ const {
   validatePdfPath,
   validateOpenWaRequest,
   validateDockerHealthOptions,
+  calculateMatchScore,
 } = require('./security.cjs');
 
 const execAsync = promisify(exec);
@@ -850,6 +851,9 @@ ipcMain.handle('dispatch:send', async (_, request) => {
         throw new Error('PDF boyutu 25MB güvenlik sınırını aşıyor.');
       }
       finalBuffer = fs.readFileSync(validation.canonicalPath);
+      if (!finalBuffer || finalBuffer.length < 5 || finalBuffer.subarray(0, 4).toString('ascii') !== '%PDF') {
+        throw new Error('Hedef dosya geçerli bir PDF belgesi (%PDF başlığı) içermiyor.');
+      }
       finalBase64 = finalBuffer.toString('base64');
       pdfSha256 = computeSha256(finalBuffer);
     } else if (pdfBase64 && typeof pdfBase64 === 'string') {
@@ -858,7 +862,11 @@ ipcMain.handle('dispatch:send', async (_, request) => {
         throw new Error('PDF boyutu 25MB güvenlik sınırını aşıyor.');
       }
       finalBuffer = Buffer.from(pdfBase64, 'base64');
+      if (!finalBuffer || finalBuffer.length < 5 || finalBuffer.subarray(0, 4).toString('ascii') !== '%PDF') {
+        throw new Error('Hedef içerik geçerli bir PDF belgesi (%PDF başlığı) içermiyor.');
+      }
       pdfSha256 = computeSha256(finalBuffer);
+      finalBase64 = finalBuffer.toString('base64');
     } else {
       throw new Error('dispatch:send: PDF içeriği zorunludur.');
     }
@@ -867,6 +875,10 @@ ipcMain.handle('dispatch:send', async (_, request) => {
     if (!cleanPhone || cleanPhone.length < 10) {
       throw new Error('dispatch:send: Geçersiz alıcı telefon numarası.');
     }
+
+    // Independently calculate match confidence in Main Process (Anti-forgery invariant)
+    const matchAnalysis = calculateMatchScore(studentName, pdfName);
+    const calculatedScore = matchAnalysis.score;
 
     // 2. Atomic SQLite Reservation in Main Process
     const reservation = dispatchRepository.reserveDispatch(
@@ -878,9 +890,15 @@ ipcMain.handle('dispatch:send', async (_, request) => {
         pdfName,
         pdfSha256,
         provider,
+        userConfirmed: request.userConfirmed !== undefined ? Boolean(request.userConfirmed) : undefined,
+        needsConfirmation: request.needsConfirmation !== undefined ? Boolean(request.needsConfirmation) : (calculatedScore < 95),
+        hasConflict: Boolean(request.hasConflict),
+        confidenceScore: calculatedScore,
+        approvalToken: request.approvalToken || request.confirmationToken,
       },
       {
         confirmationToken: typeof confirmationToken === 'string' ? confirmationToken : undefined,
+        approvalToken: request.approvalToken || request.confirmationToken,
         isFromRenderer: true,
       }
     );
@@ -1109,6 +1127,57 @@ ipcMain.handle('dispatch:getReconciliationAudit', async (_, dispatchKey) => {
       success: false,
       error: err.message,
       records: [],
+    };
+  }
+});
+
+ipcMain.handle('dispatch:confirmMatch', async (_, payload) => {
+  try {
+    if (!dispatchRepository.isInitialized()) {
+      throw new Error('DispatchRepository henüz başlatılmadı.');
+    }
+    const { studentId, studentName, phone, examName, pdfName, pdfPath, pdfBase64, userReason } = payload || {};
+    if (!studentId || !studentName || !phone || !examName || !pdfName) {
+      throw new Error('dispatch:confirmMatch: Eksik öğrenci, sınav veya dosya bilgisi.');
+    }
+
+    let pdfSha256 = '';
+    if (pdfPath) {
+      const validation = validatePdfPath(pdfPath);
+      if (!validation.valid) {
+        throw new Error(`Erişim Engellendi: ${validation.error}`);
+      }
+      const buffer = fs.readFileSync(validation.canonicalPath);
+      if (!buffer || buffer.length < 5 || buffer.subarray(0, 4).toString('ascii') !== '%PDF') {
+        throw new Error('Geçersiz PDF belgesi.');
+      }
+      pdfSha256 = computeSha256(buffer);
+    } else if (pdfBase64 && typeof pdfBase64 === 'string') {
+      const buffer = Buffer.from(pdfBase64, 'base64');
+      if (!buffer || buffer.length < 5 || buffer.subarray(0, 4).toString('ascii') !== '%PDF') {
+        throw new Error('Geçersiz PDF belgesi.');
+      }
+      pdfSha256 = computeSha256(buffer);
+    } else {
+      throw new Error('dispatch:confirmMatch: PDF içeriği zorunludur.');
+    }
+
+    const result = dispatchRepository.registerMatchApproval({
+      studentId,
+      studentName,
+      phone,
+      examName,
+      pdfName,
+      pdfSha256,
+      userReason,
+    });
+
+    return result;
+  } catch (err) {
+    console.error('[Electron] dispatch:confirmMatch Hatası:', err.message);
+    return {
+      success: false,
+      error: err.message,
     };
   }
 });

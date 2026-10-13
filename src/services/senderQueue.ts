@@ -334,6 +334,12 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
             phoneNumberId: (provider as any)?.phoneNumberId || (provider as any)?.config?.metaPhoneNumberId,
           },
           confirmationToken: currentItem.confirmationToken,
+          approvalToken: currentItem.approvalToken,
+          userConfirmed: Boolean(currentItem.userConfirmed),
+          needsConfirmation: Boolean(currentItem.needsConfirmation),
+          hasConflict: Boolean(currentItem.hasConflict),
+          confidenceScore: currentItem.confidenceScore,
+          matchApprovalFingerprint: currentItem.matchApprovalFingerprint,
         });
 
         if (sendRes.dispatchKey) {

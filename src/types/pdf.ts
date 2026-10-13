@@ -55,4 +55,6 @@ export interface MatchedItem {
   confirmationToken?: string;
   manualReconciliationStatus?: 'user_confirmed_delivered' | 'retry_authorized' | null;
   dispatchKey?: string;
+  matchApprovalFingerprint?: string;
+  approvalToken?: string;
 }
