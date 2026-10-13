@@ -341,14 +341,18 @@ function validateDockerHealthOptions(options) {
 }
 
 /**
- * Turkish Character and String Normalizer (CommonJS)
+ * Turkish Character and String Normalizer (CommonJS - Hardened for Unicode NFD/NFC, combining marks & diacritics)
  */
 function normalizeTurkishText(text) {
   if (!text) return '';
-  return String(text)
-    .replace(/İ/g, 'i')
-    .replace(/I/g, 'i')
-    .replace(/ı/g, 'i')
+  let str = String(text).normalize('NFC');
+
+  str = str
+    .replace(/I\u0307/g, 'i')
+    .replace(/i\u0307/g, 'i')
+    .replace(/\u0130/g, 'i') // Capital I with dot above -> i
+    .replace(/I/g, 'i')       // Capital I without dot -> i
+    .replace(/\u0131/g, 'i') // Small dotless i (ı) -> i
     .replace(/Ğ/g, 'g')
     .replace(/ğ/g, 'g')
     .replace(/Ü/g, 'u')
@@ -358,9 +362,17 @@ function normalizeTurkishText(text) {
     .replace(/Ö/g, 'o')
     .replace(/ö/g, 'o')
     .replace(/Ç/g, 'c')
-    .replace(/ç/g, 'c')
-    .toLowerCase()
-    .trim();
+    .replace(/ç/g, 'c');
+
+  str = str.toLowerCase();
+
+  // Strip remaining combining diacritical marks
+  str = str
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .normalize('NFC');
+
+  return str.trim();
 }
 
 /**
@@ -370,7 +382,7 @@ function simplifyForComparison(text) {
   const normalized = normalizeTurkishText(text);
   const withoutExt = normalized.replace(/\.pdf$/i, '');
   return withoutExt
-    .replace(/[_\-–—.]+/g, ' ')
+    .replace(/[_\-–—./,;:*#+~|"'`!?()[\]{}<>\\]+/g, ' ')
     .replace(/[^a-z0-9 ]/g, '')
     .replace(/\s+/g, ' ')
     .trim();

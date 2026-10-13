@@ -27,6 +27,7 @@ export interface SafetyGateDecision {
     pdfName?: string;
     phone?: string;
     dispatchKey?: string;
+    matchMethod?: string;
   };
 }
 
@@ -347,7 +348,18 @@ export function evaluateDispatchSafety(
     }
   }
 
-  // 6E. Score >= 95: Single unambiguous candidate allowed automatically
+  // 6E. P1.3 Security Invariant: Content-text or Visual OCR matches CANNOT be auto-dispatched
+  // Regardless of score, text_extraction and content_ocr MUST have explicit user confirmation
+  if ((item.matchMethod === 'text_extraction' || item.matchMethod === 'content_ocr') && !isApproved) {
+    return {
+      allowed: false,
+      code: SafetyGateCode.APPROVAL_REQUIRED,
+      reason: 'PDF içi metin katmanı veya Görsel OCR ile eşleştirilen belgeler için açık kullanıcı onayı zorunludur.',
+      details: { confidenceScore: score, matchMethod: item.matchMethod },
+    };
+  }
+
+  // 6F. Score >= 95 filename match: Single unambiguous candidate allowed automatically
   // (If it had a conflict, it was already handled by rule 6A)
 
   return {

@@ -486,27 +486,34 @@ class DispatchRepository {
    */
   registerMatchApproval(params) {
     const { studentId, studentName, phone, examName, pdfName, pdfSha256, userReason } = params || {};
-    if (!studentId || typeof studentId !== 'string') {
+    if (!studentId || typeof studentId !== 'string' || !studentId.trim()) {
       throw new Error('registerMatchApproval: studentId zorunludur.');
     }
-    if (!studentName || typeof studentName !== 'string') {
+    if (!studentName || typeof studentName !== 'string' || !studentName.trim()) {
       throw new Error('registerMatchApproval: studentName zorunludur.');
     }
-    if (!phone || typeof phone !== 'string') {
+    if (!phone || typeof phone !== 'string' || !phone.trim()) {
       throw new Error('registerMatchApproval: phone zorunludur.');
     }
-    if (!examName || typeof examName !== 'string') {
+    if (!examName || typeof examName !== 'string' || !examName.trim()) {
       throw new Error('registerMatchApproval: examName zorunludur.');
     }
-    if (!pdfName || typeof pdfName !== 'string') {
+    if (!pdfName || typeof pdfName !== 'string' || !pdfName.trim()) {
       throw new Error('registerMatchApproval: pdfName zorunludur.');
     }
-    if (!pdfSha256 || typeof pdfSha256 !== 'string') {
+    if (!pdfSha256 || typeof pdfSha256 !== 'string' || !pdfSha256.trim()) {
       throw new Error('registerMatchApproval: pdfSha256 zorunludur.');
     }
 
     const cleanPhone = normalizeRecipientPhone(phone);
+    if (!cleanPhone || cleanPhone.length < 10) {
+      throw new Error('registerMatchApproval: Geçersiz alıcı telefon numarası.');
+    }
+
     const normalizedSha = pdfSha256.trim().toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(normalizedSha)) {
+      throw new Error('registerMatchApproval: Geçersiz pdfSha256 formatı (64 karakter hex olmalıdır).');
+    }
     const dispatchKey = computeDeterministicDispatchKey({
       studentId: studentId.trim(),
       examName: examName.trim(),
@@ -1236,9 +1243,11 @@ class DispatchRepository {
       };
     }
 
+    const isContentOrOcrMatch = params.matchMethod === 'content_ocr' || params.matchMethod === 'text_extraction';
     const requiresConfirmation = Boolean(
       params.hasConflict ||
       params.needsConfirmation ||
+      isContentOrOcrMatch ||
       (params.confidenceScore !== undefined && params.confidenceScore < 95)
     );
 

@@ -1,13 +1,19 @@
 /**
- * Turkish Character and String Normalizer
+ * Turkish Character and String Normalizer (Hardened for Unicode NFD/NFC, combining marks & diacritics)
  */
 export function normalizeTurkishText(text: string): string {
   if (!text) return '';
 
-  return text
-    .replace(/İ/g, 'i')
-    .replace(/I/g, 'i')
-    .replace(/ı/g, 'i')
+  // 1. Normalize to NFC first to unify separate code points where possible
+  let str = text.normalize('NFC');
+
+  // 2. Handle decomposed I/i with combining dot above (\u0307)
+  str = str
+    .replace(/I\u0307/g, 'i')
+    .replace(/i\u0307/g, 'i')
+    .replace(/\u0130/g, 'i') // Capital I with dot above -> i
+    .replace(/I/g, 'i')       // Capital I without dot -> i (for uniform Turkish phonetics in matching)
+    .replace(/\u0131/g, 'i') // Small dotless i (ı) -> i
     .replace(/Ğ/g, 'g')
     .replace(/ğ/g, 'g')
     .replace(/Ü/g, 'u')
@@ -17,22 +23,31 @@ export function normalizeTurkishText(text: string): string {
     .replace(/Ö/g, 'o')
     .replace(/ö/g, 'o')
     .replace(/Ç/g, 'c')
-    .replace(/ç/g, 'c')
-    .toLowerCase()
-    .trim();
+    .replace(/ç/g, 'c');
+
+  // 3. Lowercase
+  str = str.toLowerCase();
+
+  // 4. Strip any remaining combining diacritical marks (e.g. from NFD text: accents, tildes, dots)
+  str = str
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .normalize('NFC');
+
+  return str.trim();
 }
 
 /**
- * Normalizes text for filename and student name comparison
- * Removes file extensions, separators, dashes, underscores
+ * Normalizes text for filename, OCR text, and student name comparison.
+ * Removes file extensions, separators, dashes, underscores, punctuation and collapses spaces.
  */
 export function simplifyForComparison(text: string): string {
   const normalized = normalizeTurkishText(text);
   // Remove .pdf extension if present
   const withoutExt = normalized.replace(/\.pdf$/i, '');
-  // Replace underscores, dashes, dots with spaces, then collapse spaces
+  // Replace underscores, dashes, hyphens, slashes, punctuation with spaces
   return withoutExt
-    .replace(/[_\-–—.]+/g, ' ')
+    .replace(/[_\-–—./,;:*#+~|"'`!?()[\]{}<>\\]+/g, ' ')
     .replace(/[^a-z0-9 ]/g, '')
     .replace(/\s+/g, ' ')
     .trim();

@@ -85,6 +85,44 @@ describe('Vatsap V2 — P1.2.2: Main Process Onay Yetkisi ve PDF Bütünlüğü 
       expect(reservation.reason).toContain('Main Process kullanıcı onayı zorunludur');
     });
 
+    it('Senaryo 1.1: Renderer geçersiz telefon, boş parametreler veya sahte SHA-256 ile onay belirteci alamaz', () => {
+      // 1. Geçersiz telefon numarası
+      expect(() => {
+        repo.registerMatchApproval({
+          studentId: 'std_1',
+          studentName: 'Ahmet Yılmaz',
+          phone: '123', // Geçersiz telefon
+          examName: 'Deneme 1',
+          pdfName: 'Ahmet.pdf',
+          pdfSha256: samplePdfSha256,
+        });
+      }).toThrow('Geçersiz alıcı telefon numarası');
+
+      // 2. Boş öğrenci ID
+      expect(() => {
+        repo.registerMatchApproval({
+          studentId: '   ',
+          studentName: 'Ahmet Yılmaz',
+          phone: '905321112233',
+          examName: 'Deneme 1',
+          pdfName: 'Ahmet.pdf',
+          pdfSha256: samplePdfSha256,
+        });
+      }).toThrow('studentId zorunludur');
+
+      // 3. Geçersiz SHA-256 formatı (64 hex değil)
+      expect(() => {
+        repo.registerMatchApproval({
+          studentId: 'std_1',
+          studentName: 'Ahmet Yılmaz',
+          phone: '905321112233',
+          examName: 'Deneme 1',
+          pdfName: 'Ahmet.pdf',
+          pdfSha256: 'not-a-valid-sha256-hash',
+        });
+      }).toThrow('Geçersiz pdfSha256 formatı');
+    });
+
     it('Senaryo 2: Renderer sahte yüksek güven skoru (99) gönderse bile, Main Process skoru bağımsız hesaplar ve düşükse engeller', () => {
       // Öğrenci "Ali Veli" fakat PDF adı "Ahmet_Yilmaz.pdf"
       // Renderer sahte güven skoru 99 göndermeye çalışıyor
@@ -110,6 +148,68 @@ describe('Vatsap V2 — P1.2.2: Main Process Onay Yetkisi ve PDF Bütünlüğü 
       expect(reservation.allowed).toBe(false);
       expect(reservation.code).toBe('LOW_MATCH_CONFIDENCE');
       expect(reservation.reason).toContain('%70 altında olan belgeler');
+    });
+
+    it('Senaryo 2.1: Renderer OCR/içerik eşleşmesini farklı bir yöntem veya 100 skor ile gönderse dahi, onay olmadan rezervasyon açılmaz', () => {
+      // 1. matchMethod: 'content_ocr' ve 99 skor gönderilse bile approvalToken yoksa APPROVAL_REQUIRED dönmelidir
+      const resOcr = repo.reserveDispatch({
+        studentId: 'std_ocr_spoof',
+        studentName: 'Ahmet Yılmaz',
+        phone: '905321112233',
+        examName: '1. Dönem Ortak Sınavı',
+        pdfName: 'Ahmet_Yilmaz.pdf',
+        pdfSha256: samplePdfSha256,
+        provider: 'mock',
+        matchMethod: 'content_ocr',
+        confidenceScore: 100, // Sahte 100 skor
+        userConfirmed: true,  // Sahte onay bayrağı
+      });
+
+      expect(resOcr.allowed).toBe(false);
+      expect(resOcr.code).toBe('APPROVAL_REQUIRED');
+
+      // 2. matchMethod: 'text_extraction' için de onay zorunludur
+      const resText = repo.reserveDispatch({
+        studentId: 'std_text_spoof',
+        studentName: 'Ahmet Yılmaz',
+        phone: '905321112233',
+        examName: '1. Dönem Ortak Sınavı',
+        pdfName: 'Ahmet_Yilmaz.pdf',
+        pdfSha256: samplePdfSha256,
+        provider: 'mock',
+        matchMethod: 'text_extraction',
+        confidenceScore: 98,
+      });
+
+      expect(resText.allowed).toBe(false);
+      expect(resText.code).toBe('APPROVAL_REQUIRED');
+
+      // 3. Main Process onay token'ı başarıyla kaydedildiğinde rezervasyona izin verilir
+      const approval = repo.registerMatchApproval({
+        studentId: 'std_ocr_spoof',
+        studentName: 'Ahmet Yılmaz',
+        phone: '905321112233',
+        examName: '1. Dönem Ortak Sınavı',
+        pdfName: 'Ahmet_Yilmaz.pdf',
+        pdfSha256: samplePdfSha256,
+        userReason: 'Öğretmen OCR görselini inceleyip onayladı',
+      });
+
+      const resWithValidApproval = repo.reserveDispatch({
+        studentId: 'std_ocr_spoof',
+        studentName: 'Ahmet Yılmaz',
+        phone: '905321112233',
+        examName: '1. Dönem Ortak Sınavı',
+        pdfName: 'Ahmet_Yilmaz.pdf',
+        pdfSha256: samplePdfSha256,
+        provider: 'mock',
+        matchMethod: 'content_ocr',
+        confidenceScore: 90,
+        approvalToken: approval.token,
+      });
+
+      expect(resWithValidApproval.allowed).toBe(true);
+      expect(resWithValidApproval.dispatch.status).toBe('sending');
     });
 
     it('Senaryo 3: Öğrenci A için alınmış onay belirteci başka bir öğrenci (Öğrenci B) için kullanılamaz (APPROVAL_MISMATCH)', () => {
@@ -261,6 +361,108 @@ describe('Vatsap V2 — P1.2.2: Main Process Onay Yetkisi ve PDF Bütünlüğü 
       expect(res2.allowed).toBe(false);
       // İkinci denemede ya belirteç tüketildi (APPROVAL_CONSUMED) ya da kayıt zaten işlemde/gönderildi (IN_PROGRESS/ALREADY_SENT) olarak engellenmelidir
       expect(['APPROVAL_CONSUMED', 'IN_PROGRESS', 'ALREADY_SENT']).toContain(res2.code);
+    });
+
+    it('Senaryo 6.1: Süresi dolmuş veya geçersiz/sahte onay belirteci ile rezervasyon yapılamaz', () => {
+      // 1. Sahte / Var olmayan onay belirteci
+      const resFake = repo.reserveDispatch({
+        studentId: 'std_invalid_token',
+        studentName: 'Ahmet Yılmaz',
+        phone: '905321112233',
+        examName: 'Deneme 1',
+        pdfName: 'Ahmet_Yilmaz.pdf',
+        pdfSha256: samplePdfSha256,
+        provider: 'mock',
+        needsConfirmation: true,
+        approvalToken: 'appr_totally_fake_token_1234567890',
+      });
+
+      expect(resFake.allowed).toBe(false);
+      expect(resFake.code).toBe('APPROVAL_NOT_FOUND');
+
+      // 2. Süresi dolmuş onay belirteci
+      const approval = repo.registerMatchApproval({
+        studentId: 'std_expired_token',
+        studentName: 'Ahmet Yılmaz',
+        phone: '905321112233',
+        examName: 'Deneme 1',
+        pdfName: 'Ahmet_Yilmaz.pdf',
+        pdfSha256: samplePdfSha256,
+      });
+
+      // Token süresini geçmişe çek
+      const record = repo.matchApprovals.get(approval.token);
+      record.expiresAt = Date.now() - 1000;
+
+      const resExpired = repo.reserveDispatch({
+        studentId: 'std_expired_token',
+        studentName: 'Ahmet Yılmaz',
+        phone: '905321112233',
+        examName: 'Deneme 1',
+        pdfName: 'Ahmet_Yilmaz.pdf',
+        pdfSha256: samplePdfSha256,
+        provider: 'mock',
+        needsConfirmation: true,
+        approvalToken: approval.token,
+      });
+
+      expect(resExpired.allowed).toBe(false);
+      expect(resExpired.code).toBe('APPROVAL_EXPIRED');
+      expect(resExpired.reason).toContain('süresi dolmuş');
+    });
+
+    it('Senaryo 6.2: Onayın gerçek öğrenci, telefon, PDF SHA-256 ve eşleşme kaydına kriptografik/deterministik bağlandığını doğrula', () => {
+      const approval = repo.registerMatchApproval({
+        studentId: 'std_binding_test',
+        studentName: 'Mehmet Kaya',
+        phone: '905334445566',
+        examName: 'LGS Deneme 3',
+        pdfName: 'Mehmet_Kaya.pdf',
+        pdfSha256: samplePdfSha256,
+      });
+
+      expect(approval.fingerprint).toBeDefined();
+
+      // Parametrelerden biri bile farklı olursa onay doğrulaması başarısız olmalıdır:
+      // A. Yanlış öğrenci ID
+      const resBadId = repo.verifyAndConsumeMatchApproval(approval.token, {
+        studentId: 'std_OTHER',
+        phone: '905334445566',
+        examName: 'LGS Deneme 3',
+        pdfSha256: samplePdfSha256,
+      });
+      expect(resBadId.valid).toBe(false);
+      expect(resBadId.code).toBe('APPROVAL_MISMATCH');
+
+      // B. Yanlış telefon
+      const resBadPhone = repo.verifyAndConsumeMatchApproval(approval.token, {
+        studentId: 'std_binding_test',
+        phone: '905330000000',
+        examName: 'LGS Deneme 3',
+        pdfSha256: samplePdfSha256,
+      });
+      expect(resBadPhone.valid).toBe(false);
+      expect(resBadPhone.code).toBe('APPROVAL_MISMATCH');
+
+      // C. Yanlış sınav adı
+      const resBadExam = repo.verifyAndConsumeMatchApproval(approval.token, {
+        studentId: 'std_binding_test',
+        phone: '905334445566',
+        examName: 'Farklı Bir Sınav',
+        pdfSha256: samplePdfSha256,
+      });
+      expect(resBadExam.valid).toBe(false);
+      expect(resBadExam.code).toBe('APPROVAL_MISMATCH');
+
+      // D. Yanlış / Değiştirilmiş SHA-256
+      const resBadSha = repo.verifyAndConsumeMatchApproval(approval.token, {
+        studentId: 'std_binding_test',
+        phone: '905334445566',
+        examName: 'LGS Deneme 3',
+        pdfSha256: 'a'.repeat(64),
+      });
+      expect(resBadSha.valid).toBe(false);
+      expect(resBadSha.code).toBe('MATCH_CHANGED_AFTER_APPROVAL');
     });
   });
 

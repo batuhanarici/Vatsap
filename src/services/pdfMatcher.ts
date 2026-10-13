@@ -176,6 +176,19 @@ export function matchStudentsWithPdfs(
  * Converts a browser File to base64 string
  */
 export async function fileToBase64(file: File): Promise<string> {
+  if (typeof file.arrayBuffer === 'function') {
+    const ab = await file.arrayBuffer();
+    if (typeof Buffer !== 'undefined') {
+      return Buffer.from(ab).toString('base64');
+    }
+    const bytes = new Uint8Array(ab);
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+  }
+
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {

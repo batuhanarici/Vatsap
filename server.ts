@@ -217,7 +217,7 @@ async function startServer() {
     });
   });
 
-  // Multimodal OCR Route for Scanned PDFs (Visual Optical Character Recognition)
+  // Multimodal OCR Route for Scanned PDFs (Visual Optical Character Recognition) - Hardened for P1.3
   app.post('/api/ocr-scan', async (req, res) => {
     try {
       const { imageBase64, pdfBase64, studentCandidates } = req.body;
@@ -226,6 +226,32 @@ async function startServer() {
           success: false,
           error: 'Görsel veya PDF verisi (imageBase64 veya pdfBase64) zorunludur.',
         });
+      }
+
+      const base64Data = pdfBase64 || imageBase64;
+      if (typeof base64Data !== 'string' || base64Data.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'Geçersiz Base64 verisi sağlandı.',
+        });
+      }
+
+      // 1. Strict Size Limit (Max ~15 MB raw binary / ~20 MB base64 string)
+      const MAX_BASE64_LENGTH = 20 * 1024 * 1024;
+      if (base64Data.length > MAX_BASE64_LENGTH) {
+        return res.status(413).json({
+          success: false,
+          error: 'Belge boyutu izin verilen sınırı aşıyor (Maksimum 15 MB).',
+        });
+      }
+
+      // 2. Sanitize and Validate Student Candidates Array
+      let sanitizedCandidates: string[] = [];
+      if (Array.isArray(studentCandidates)) {
+        sanitizedCandidates = studentCandidates
+          .slice(0, 200) // Max 200 candidates
+          .filter((c) => typeof c === 'string' && c.trim().length > 0)
+          .map((c) => c.slice(0, 100).replace(/[<>{}\\]/g, '').trim()); // Strip injection tags
       }
 
       const apiKey = process.env.GEMINI_API_KEY;
@@ -248,13 +274,12 @@ async function startServer() {
       });
 
       const mimeType = pdfBase64 ? 'application/pdf' : 'image/jpeg';
-      const base64Data = pdfBase64 || imageBase64;
 
       const prompt = `Sen uzman bir optik karakter tanıma (OCR) ve okul sınav karnesi analiz motorusun.
 Aşağıdaki taranmış karne / sınav sonuç belgesini oku ve analiz et.
 Belgede yazan Öğrenci Adı Soyadı, Okul No, Sınıf ve Şube bilgilerini tespit et.
 Eğer varsa aşağıdaki aday öğrenci listesinden hangisiyle eşleştiğini bul:
-Aday Öğrenciler: ${JSON.stringify(studentCandidates || [])}
+Aday Öğrenciler: ${JSON.stringify(sanitizedCandidates)}
 
 Yanıtı kesinlikle geçerli bir JSON olarak ver:
 {
@@ -266,7 +291,12 @@ Yanıtı kesinlikle geçerli bir JSON olarak ver:
   "notes": "Belge durumuyla ilgili kısa not"
 }`;
 
-      const response = await ai.models.generateContent({
+      // 25 second timeout safeguard
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('OCR servis zaman aşımı (25 saniye)')), 25000)
+      );
+
+      const generatePromise = ai.models.generateContent({
         model: 'gemini-3.8-flash',
         contents: [
           {
@@ -289,31 +319,66 @@ Yanıtı kesinlikle geçerli bir JSON olarak ver:
         },
       });
 
+      const response = await Promise.race([generatePromise, timeoutPromise]);
       const responseText = response.text || '{}';
-      let parsed;
+
+      let parsed: Record<string, unknown> = {};
       try {
         parsed = JSON.parse(responseText);
       } catch {
         parsed = {
           detectedStudentName: '',
           matchedStudentName: null,
-          extractedText: responseText,
+          extractedText: responseText.slice(0, 1000),
           confidence: 50,
           isScanned: true,
         };
       }
 
+      // 3. Strict Output Schema Validation & Sanitization
+      const cleanDetected = typeof parsed.detectedStudentName === 'string'
+        ? parsed.detectedStudentName.replace(/<[^>]*>/g, '').trim().slice(0, 100)
+        : '';
+
+      let cleanMatched: string | null = null;
+      if (typeof parsed.matchedStudentName === 'string' && parsed.matchedStudentName) {
+        // Matched student MUST exist in sanitizedCandidates
+        const cand = sanitizedCandidates.find(
+          (c) => c.toLowerCase() === (parsed.matchedStudentName as string).toLowerCase().trim()
+        );
+        cleanMatched = cand || null;
+      }
+
+      const cleanText = typeof parsed.extractedText === 'string'
+        ? parsed.extractedText.replace(/<[^>]*>/g, '').slice(0, 2000)
+        : '';
+
+      const numConfidence = typeof parsed.confidence === 'number' && Number.isFinite(parsed.confidence)
+        ? Math.min(100, Math.max(0, Math.round(parsed.confidence)))
+        : 80;
+
+      const cleanData = {
+        detectedStudentName: cleanDetected,
+        matchedStudentName: cleanMatched,
+        extractedText: cleanText,
+        confidence: numConfidence,
+        isScanned: Boolean(parsed.isScanned),
+        notes: typeof parsed.notes === 'string' ? parsed.notes.slice(0, 200) : '',
+      };
+
       return res.json({
         success: true,
         isOcrAvailable: true,
-        data: parsed,
+        data: cleanData,
       });
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      return res.status(500).json({
+      const isTimeout = errMsg.includes('zaman aşımı');
+      const statusCode = isTimeout ? 504 : 500;
+      return res.status(statusCode).json({
         success: false,
         isOcrAvailable: true,
-        error: `OCR işlemi başarısız oldu: ${errMsg}`,
+        error: `OCR işlemi başarısız oldu: ${sanitizeSensitiveText(errMsg)}`,
       });
     }
   });

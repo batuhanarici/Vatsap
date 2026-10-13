@@ -1141,11 +1141,20 @@ ipcMain.handle('dispatch:confirmMatch', async (_, payload) => {
       throw new Error('dispatch:confirmMatch: Eksik öğrenci, sınav veya dosya bilgisi.');
     }
 
+    const cleanPhone = normalizeRecipientPhone(phone);
+    if (!cleanPhone || cleanPhone.length < 10) {
+      throw new Error('dispatch:confirmMatch: Geçersiz alıcı telefon numarası.');
+    }
+
     let pdfSha256 = '';
     if (pdfPath) {
       const validation = validatePdfPath(pdfPath);
       if (!validation.valid) {
         throw new Error(`Erişim Engellendi: ${validation.error}`);
+      }
+      const stats = fs.statSync(validation.canonicalPath);
+      if (stats.size > 25 * 1024 * 1024) {
+        throw new Error('PDF boyutu 25MB güvenlik sınırını aşıyor.');
       }
       const buffer = fs.readFileSync(validation.canonicalPath);
       if (!buffer || buffer.length < 5 || buffer.subarray(0, 4).toString('ascii') !== '%PDF') {
