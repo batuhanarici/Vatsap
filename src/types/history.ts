@@ -11,7 +11,16 @@ export interface HistoryItem {
   pdfFileName: string;
   date: string; // ISO string e.g. 2026-10-02T18:30:00
   updatedAt?: string;
-  status: 'success' | 'sent' | 'delivered' | 'failed' | 'partial_success' | 'cancelled' | 'unknown';
+  status:
+    | 'success'
+    | 'sent'
+    | 'delivered'
+    | 'failed'
+    | 'partial_success'
+    | 'cancelled'
+    | 'unknown'
+    | 'queued'
+    | 'sending';
   outcome?: SendOutcome;
   pdfSent?: boolean;
   messageSent?: boolean;

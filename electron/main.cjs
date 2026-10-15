@@ -316,6 +316,7 @@ ipcMain.handle('openwa:request', async (_, options) => {
       method,
       headers,
       signal: controller.signal,
+      redirect: 'error',
     };
 
     if (body && ['POST', 'PUT', 'PATCH'].includes(method)) {
@@ -657,6 +658,27 @@ ipcMain.handle('dispatch:createUnknownRetryToken', async (_, dispatchKey) => {
 function isAmbiguousError(errMsg) {
   if (!errMsg || typeof errMsg !== 'string') return false;
   const lower = errMsg.toLowerCase();
+
+  // Definite connection refusals, session unreadiness, and HTTP client rejections are NOT ambiguous
+  if (
+    lower.includes('econnrefused') ||
+    lower.includes('bağlantı reddedildi') ||
+    lower.includes('gönderim başlatılmadı') ||
+    lower.includes('oturum hazır değil') ||
+    lower.includes('oturum bulunamadı') ||
+    lower.includes('erişim reddedildi') ||
+    lower.includes('bad request') ||
+    lower.includes('400') ||
+    lower.includes('401') ||
+    lower.includes('403') ||
+    lower.includes('404') ||
+    lower.includes('409') ||
+    lower.includes('422') ||
+    lower.includes('yetkisiz')
+  ) {
+    return false;
+  }
+
   return (
     lower.includes('timeout') ||
     lower.includes('timed out') ||
@@ -666,9 +688,6 @@ function isAmbiguousError(errMsg) {
     lower.includes('enetdown') ||
     lower.includes('enetunreach') ||
     lower.includes('etimedout') ||
-    lower.includes('bağlantı') ||
-    lower.includes('connection') ||
-    lower.includes('network') ||
     lower.includes('504') ||
     lower.includes('502') ||
     lower.includes('gateway')
@@ -756,8 +775,101 @@ async function sendOpenWaDocumentInternal({ baseUrl, sessionId, phone, base64, f
   const cleanPhone = phone.replace(/[^0-9]/g, '');
   const cleanBase64 = (base64.startsWith('data:') ? base64.split(',')[1] : base64).trim().replace(/\s+/g, '');
   const safeSession = (sessionId || 'default').trim();
-  const safeBaseUrl = (baseUrl || 'http://127.0.0.1:2785/api').replace(/\/+$/, '');
+
+  // Security Invariant: Strictly enforce 127.0.0.1:2785 or localhost:2785
+  const rawBase = (baseUrl || 'http://127.0.0.1:2785/api').trim();
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(rawBase);
+  } catch {
+    return { success: false, error: 'Erişim reddedildi: Geçersiz OpenWA URL biçimi.' };
+  }
+  if (parsedUrl.protocol !== 'http:') {
+    return { success: false, error: 'Erişim reddedildi: Yalnızca HTTP protokolü kullanılabilir.' };
+  }
+  if (parsedUrl.hostname !== '127.0.0.1' && parsedUrl.hostname !== 'localhost') {
+    return { success: false, error: `Erişim reddedildi: Hedef adres (${parsedUrl.hostname}) izinli yerel OpenWA adresi değildir.` };
+  }
+  const port = parsedUrl.port || '80';
+  if (port !== '2785') {
+    return { success: false, error: `Erişim reddedildi: Port (${port}) izinli değil. Yalnızca 2785 portu kullanılabilir.` };
+  }
+
+  const safeBaseUrl = rawBase.replace(/\/+$/, '');
   const url = `${safeBaseUrl}/sessions/${encodeURIComponent(safeSession)}/messages/send-document`;
+
+  const openWaApiKey = credentialService.getOpenWAKey();
+  const headers = {
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  };
+  if (openWaApiKey) {
+    headers['X-API-Key'] = openWaApiKey;
+    headers['api-key'] = openWaApiKey;
+  }
+
+  // Pre-flight session connectivity & readiness check (separated from document transmission)
+  const probeUrl = `${safeBaseUrl}/sessions/${encodeURIComponent(safeSession)}`;
+  const probeController = new AbortController();
+  const probeTimer = setTimeout(() => probeController.abort(), 5000);
+
+  try {
+    const probeRes = await fetch(probeUrl, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        ...(openWaApiKey ? { 'X-API-Key': openWaApiKey, 'api-key': openWaApiKey } : {}),
+      },
+      signal: probeController.signal,
+      redirect: 'error',
+    });
+    clearTimeout(probeTimer);
+
+    if (probeRes.status === 404) {
+      return {
+        success: false,
+        error: `OpenWA oturumu bulunamadı (404 Not Found): "${safeSession}". Gönderim başlatılmadı.`,
+      };
+    }
+    if (probeRes.status === 401 || probeRes.status === 403) {
+      return {
+        success: false,
+        error: 'OpenWA API anahtarı geçersiz veya yetkisiz (401/403). Gönderim başlatılmadı.',
+      };
+    }
+
+    if (probeRes.ok) {
+      const probeData = await probeRes.json().catch(() => null);
+      const stateRaw = String(probeData?.status || probeData?.state || '').toLowerCase();
+      const isReady =
+        stateRaw === 'ready' ||
+        stateRaw === 'connected' ||
+        stateRaw === 'islogged' ||
+        stateRaw === 'chatsavailable';
+
+      if (!isReady && stateRaw) {
+        return {
+          success: false,
+          error: `OpenWA oturumu hazır değil (Durum: ${stateRaw}). Gönderim başlatılmadı.`,
+        };
+      }
+    }
+  } catch (probeErr) {
+    clearTimeout(probeTimer);
+    const probeMsg = probeErr.message || String(probeErr);
+    if (probeMsg.includes('ECONNREFUSED') || probeMsg.includes('connect ECONNREFUSED')) {
+      return {
+        success: false,
+        error: 'OpenWA servisi kapalı veya erişilemez (ECONNREFUSED). Gönderim başlatılmadı.',
+      };
+    }
+    if (probeErr.name === 'AbortError' || probeMsg.includes('abort') || probeMsg.includes('timeout')) {
+      return {
+        success: false,
+        error: 'OpenWA oturum kontrolü zaman aşımına uğradı. Gönderim başlatılmadı.',
+      };
+    }
+  }
 
   const payload = {
     chatId: `${cleanPhone}@c.us`,
@@ -766,17 +878,6 @@ async function sendOpenWaDocumentInternal({ baseUrl, sessionId, phone, base64, f
     filename: fileName || 'karne.pdf',
     caption: caption || fileName || 'karne.pdf',
   };
-
-  const headers = {
-    'Content-Type': 'application/json',
-    Accept: 'application/json',
-  };
-
-  const openWaApiKey = credentialService.getOpenWAKey();
-  if (openWaApiKey) {
-    headers['X-API-Key'] = openWaApiKey;
-    headers['api-key'] = openWaApiKey;
-  }
 
   const controller = new AbortController();
   const timeoutMs = 30000;
@@ -788,6 +889,7 @@ async function sendOpenWaDocumentInternal({ baseUrl, sessionId, phone, base64, f
       headers,
       body: JSON.stringify(payload),
       signal: controller.signal,
+      redirect: 'error',
     });
     clearTimeout(timer);
 
@@ -941,6 +1043,12 @@ ipcMain.handle('dispatch:send', async (_, request) => {
         }
         if (request.mockShouldReject) {
           throw new Error('ECONNRESET connection reset by peer');
+        }
+        if (request.mockShouldRefuse) {
+          throw new Error('OpenWA servisi kapalı veya erişilemez (ECONNREFUSED). Gönderim başlatılmadı.');
+        }
+        if (request.mockSessionNotReady) {
+          throw new Error('OpenWA oturumu hazır değil (Durum: notLogged). Gönderim başlatılmadı.');
         }
         if (request.mockShouldFail) {
           providerResult = { success: false, error: 'HTTP 400 Bad Request: Geçersiz numara.' };

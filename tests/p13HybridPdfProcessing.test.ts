@@ -349,12 +349,8 @@ describe('Vatsap V2 — P1.3: OCR Güvenilirliği ve PDF Hibrit İşleme Regresy
         confidenceScore: 60,
       };
 
-      const safetyCheck = evaluateDispatchSafety(itemToEvaluate, {
-        provider: 'mock',
       // A. Çakışmalı (hasConflict: true) olduğunda AMBIGUOUS_MATCH ile engellenmelidir
-      const safetyCheckConflict = evaluateDispatchSafety(itemToEvaluate, {
-        provider: 'mock',
-      });
+      const safetyCheckConflict = evaluateDispatchSafety(itemToEvaluate);
       expect(safetyCheckConflict.allowed).toBe(false);
       expect(safetyCheckConflict.code).toBe(SafetyGateCode.AMBIGUOUS_MATCH);
 
@@ -364,9 +360,7 @@ describe('Vatsap V2 — P1.3: OCR Güvenilirliği ve PDF Hibrit İşleme Regresy
         hasConflict: false,
         confidenceScore: 88,
       };
-      const safetyCheckApproval = evaluateDispatchSafety(itemSingleCandidate, {
-        provider: 'mock',
-      });
+      const safetyCheckApproval = evaluateDispatchSafety(itemSingleCandidate);
       expect(safetyCheckApproval.allowed).toBe(false);
       expect(safetyCheckApproval.code).toBe(SafetyGateCode.APPROVAL_REQUIRED);
     });

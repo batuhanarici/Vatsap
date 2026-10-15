@@ -15,6 +15,7 @@ import {
   RefreshCw,
   ShieldCheck,
   RotateCcw,
+  Clock,
 } from 'lucide-react';
 
 interface HistoryTableProps {
@@ -109,6 +110,10 @@ export const HistoryTable: React.FC<HistoryTableProps> = ({
         ? 'Teslim Edildi'
         : item.status === 'unknown'
         ? 'Belirsiz (Unknown)'
+        : item.status === 'sending'
+        ? 'Gönderiliyor'
+        : item.status === 'queued'
+        ? 'Kuyrukta (Sırada)'
         : 'Başarısız',
       `"${(item.manualReconciliationStatus || '').replace(/"/g, '""')}"`,
       `"${(item.reconciliationReason || '').replace(/"/g, '""')}"`,
@@ -131,6 +136,30 @@ export const HistoryTable: React.FC<HistoryTableProps> = ({
   };
 
   const renderStatusBadge = (item: HistoryItem) => {
+    if (item.status === 'queued') {
+      return (
+        <span
+          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 border border-neutral-300 dark:border-neutral-700"
+          title="Kuyrukta gönderim sırası bekliyor"
+        >
+          <Clock className="w-3 h-3 text-neutral-500 dark:text-neutral-400" />
+          <span>Kuyrukta (Sırada)</span>
+        </span>
+      );
+    }
+
+    if (item.status === 'sending') {
+      return (
+        <span
+          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 animate-pulse"
+          title="Sağlayıcıya aktarılıyor..."
+        >
+          <RefreshCw className="w-3 h-3 text-indigo-600 dark:text-indigo-400 animate-spin" />
+          <span>Gönderiliyor...</span>
+        </span>
+      );
+    }
+
     if (item.status === 'delivered') {
       return (
         <span

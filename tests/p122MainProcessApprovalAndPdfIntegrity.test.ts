@@ -212,6 +212,34 @@ describe('Vatsap V2 — P1.2.2: Main Process Onay Yetkisi ve PDF Bütünlüğü 
       expect(resWithValidApproval.dispatch.status).toBe('sending');
     });
 
+    it('Senaryo 2.2: Renderer sahte matchMethod=exact_filename ve sahte 100 skor gönderse dahi, Main Process bağımsız denetimi veya onay zorunluluğu sahte rezervasyonu kilitler', () => {
+      // Simülasyon: Renderer kötü niyetli veya hatalı biçimde eşleşmeyen bir dosyayı "exact_filename" ve "100 skor" olarak gönderiyor
+      const studentName = 'Ahmet Yılmaz';
+      const mismatchedPdfName = 'karne_belgesi_adsiz_001.pdf';
+
+      // Main Process dosya adından skoru bağımsız hesaplar (Anti-forgery invariant)
+      const independentScore = calculateMatchScore(studentName, mismatchedPdfName).score;
+      expect(independentScore).toBeLessThan(70);
+
+      // Renderer'dan gelen sahte 100 skoru Main Process bağımsız skoruyla ezer
+      const reservationSpoofed = repo.reserveDispatch({
+        studentId: 'std_spoofed_renderer',
+        studentName,
+        phone: '905321112233',
+        examName: 'Ortak Sınav',
+        pdfName: mismatchedPdfName,
+        pdfSha256: samplePdfSha256,
+        provider: 'mock',
+        matchMethod: 'exact_filename', // Sahte matchMethod
+        confidenceScore: independentScore, // Main Process hesaplanan bağımsız skor
+        userConfirmed: true, // Sahte renderer onayı
+      });
+
+      expect(reservationSpoofed.allowed).toBe(false);
+      expect(reservationSpoofed.code).toBe('LOW_MATCH_CONFIDENCE');
+      expect(reservationSpoofed.reason).toContain('%70 altında olan belgeler');
+    });
+
     it('Senaryo 3: Öğrenci A için alınmış onay belirteci başka bir öğrenci (Öğrenci B) için kullanılamaz (APPROVAL_MISMATCH)', () => {
       // Öğrenci A için Main Process'te resmi onay kaydediliyor
       const approval = repo.registerMatchApproval({
