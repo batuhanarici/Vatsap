@@ -100,8 +100,8 @@ export default function App() {
   const [folderPath, setFolderPath] = useState<string>('');
   const [pdfFiles, setPdfFiles] = useState<LocalPdfFile[]>([]);
 
-  // WhatsApp Providers
-  const [isMockMode, setIsMockMode] = useState<boolean>(false);
+  // WhatsApp Providers (Default: Mock Mode enabled for pilot safety)
+  const [isMockMode, setIsMockMode] = useState<boolean>(true);
   const openWaProvider = useMemo(() => new OpenWAProvider(config), [config]);
   const mockProvider = useMemo(() => new MockWhatsAppProvider(true), []);
   const webProvider = useMemo(() => new WhatsAppWebProvider(), []);
