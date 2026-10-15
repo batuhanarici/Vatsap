@@ -56,6 +56,7 @@ import { ManualMatchModal } from './components/ManualMatchModal';
 import { OcrFailureModal } from './components/OcrFailureModal';
 import { BackupPreviewModal } from './components/BackupPreviewModal';
 import { ReconciliationModal } from './components/ReconciliationModal';
+import { LiveModeModal } from './components/LiveModeModal';
 
 export default function App() {
   // Navigation
@@ -102,6 +103,34 @@ export default function App() {
 
   // WhatsApp Providers (Default: Mock Mode enabled for pilot safety)
   const [isMockMode, setIsMockMode] = useState<boolean>(true);
+  const [isLiveModalOpen, setIsLiveModalOpen] = useState<boolean>(false);
+
+  const handleToggleMockMode = () => {
+    if (isMockMode) {
+      setIsLiveModalOpen(true);
+    } else {
+      if (typeof window !== 'undefined' && window.electronAPI?.liveMode?.revoke) {
+        window.electronAPI.liveMode.revoke().catch(() => {});
+      }
+      setIsMockMode(true);
+    }
+  };
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.electronAPI?.liveMode?.getStatus) {
+      window.electronAPI.liveMode
+        .getStatus()
+        .then((st) => {
+          if (!st.isLiveAuthorized) {
+            setIsMockMode(true);
+          }
+        })
+        .catch(() => {
+          setIsMockMode(true);
+        });
+    }
+  }, []);
+
   const openWaProvider = useMemo(() => new OpenWAProvider(config), [config]);
   const mockProvider = useMemo(() => new MockWhatsAppProvider(true), []);
   const webProvider = useMemo(() => new WhatsAppWebProvider(), []);
@@ -1317,7 +1346,7 @@ export default function App() {
         onRefreshStatus={() => checkStatus(true)}
         isCheckingStatus={isCheckingStatus}
         isMockMode={isMockMode}
-        onToggleMockMode={() => setIsMockMode(!isMockMode)}
+        onToggleMockMode={handleToggleMockMode}
         onOpenTestModal={() => setIsTestModalOpen(true)}
         isDarkMode={isDarkMode}
         onToggleDarkMode={() => setIsDarkMode((prev) => !prev)}
@@ -1589,6 +1618,13 @@ export default function App() {
         onSelectTemplate={handleSelectTemplate}
         initialExamName={config.examName}
         selectedGroupName={selectedGroup}
+        isMockMode={isMockMode}
+      />
+
+      <LiveModeModal
+        isOpen={isLiveModalOpen}
+        onClose={() => setIsLiveModalOpen(false)}
+        onConfirmLiveMode={() => setIsMockMode(false)}
       />
 
       <SendingProgressModal

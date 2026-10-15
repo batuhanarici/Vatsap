@@ -106,14 +106,15 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
             <button
               onClick={() => { if (isMockMode) onToggleMockMode(); }}
-              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                 !isMockMode
-                  ? 'bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 shadow-xs border border-neutral-200 dark:border-neutral-700'
+                  ? 'bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-300 shadow-xs border border-red-200 dark:border-red-800 font-semibold'
                   : 'text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200'
               }`}
-              title="Gerçek WhatsApp bağlantısı modu"
+              title="Gerçek WhatsApp bağlantısı modu (Açık onay gerektirir)"
             >
-              Canlı Mod
+              {!isMockMode && <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />}
+              <span>Canlı Mod</span>
             </button>
           </div>
 

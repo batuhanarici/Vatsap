@@ -2,6 +2,7 @@ import { WhatsAppProvider } from './types';
 import { WhatsAppStatus, SendResult } from '../../types/whatsapp';
 
 export class MockWhatsAppProvider implements WhatsAppProvider {
+  public readonly providerType = 'mock';
   private isConnected: boolean = true;
   private failRate: number = 0; // 0 = always succeed, 0.2 = 20% fail for testing error state
 

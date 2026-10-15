@@ -22,6 +22,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   metaCloud: {
     getStatus: (options) => ipcRenderer.invoke('meta:getStatus', options),
   },
+  liveMode: {
+    getStatus: () => ipcRenderer.invoke('liveMode:getStatus'),
+    authorize: (payload) => ipcRenderer.invoke('liveMode:authorize', payload),
+    revoke: () => ipcRenderer.invoke('liveMode:revoke'),
+  },
   dispatch: {
     send: (request) => ipcRenderer.invoke('dispatch:send', request),
     confirmMatch: (payload) => ipcRenderer.invoke('dispatch:confirmMatch', payload),

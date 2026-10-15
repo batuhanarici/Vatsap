@@ -1,6 +1,7 @@
 import { WhatsAppStatus, SendResult } from '../../types/whatsapp';
 
 export interface WhatsAppProvider {
+  providerType?: 'mock' | 'openwa' | 'meta_cloud' | 'whatsapp_web' | string;
   getStatus(): Promise<WhatsAppStatus>;
   getQrCode(): Promise<string | null>;
   createSession?(sessionName?: string): Promise<{ success: boolean; sessionUuid?: string; error?: string }>;

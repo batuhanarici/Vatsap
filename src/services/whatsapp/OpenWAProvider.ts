@@ -54,6 +54,7 @@ function createTimeout(ms: number): TimeoutController {
 }
 
 export class OpenWAProvider implements WhatsAppProvider {
+  public readonly providerType = 'openwa';
   private config: OpenWAConfig;
 
   constructor(config: OpenWAConfig) {

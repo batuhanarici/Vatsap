@@ -36,6 +36,7 @@ interface SendConfirmModalProps {
   onSelectTemplate: (id: string) => void;
   initialExamName?: string;
   selectedGroupName?: string;
+  isMockMode?: boolean;
 }
 
 export const SendConfirmModal: React.FC<SendConfirmModalProps> = ({
@@ -51,10 +52,12 @@ export const SendConfirmModal: React.FC<SendConfirmModalProps> = ({
   onSelectTemplate,
   initialExamName = 'Genel Deneme Sınavı',
   selectedGroupName = 'all',
+  isMockMode = true,
 }) => {
   const [examName, setExamName] = useState(initialExamName);
   const [sendMode, setSendMode] = useState<'now' | 'schedule'>('now');
   const [sendToSecondary, setSendToSecondary] = useState(false);
+  const [liveConfirmed, setLiveConfirmed] = useState(false);
 
   // Schedule date & time state
   const getTodayDateString = () => {
@@ -175,6 +178,28 @@ export const SendConfirmModal: React.FC<SendConfirmModalProps> = ({
 
         {/* Scrollable Body */}
         <div className="p-5 space-y-4 overflow-y-auto">
+          {/* Live vs Mock Mode Safety Indicator Banner */}
+          {!isMockMode ? (
+            <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-red-800 dark:text-red-300 flex items-start gap-2.5">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-red-600 dark:text-red-400" />
+              <div className="space-y-1">
+                <p className="font-semibold text-xs text-red-900 dark:text-red-200">
+                  ⚠️ CANLI MOD AKTİF — Gerçek WhatsApp Gönderimi
+                </p>
+                <p className="text-[11px] text-red-700 dark:text-red-400 leading-relaxed">
+                  Mesajlar ve PDF karneler velilerin kayıtlı gerçek telefon hatlarına doğrudan iletilecektir.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 text-emerald-800 dark:text-emerald-300 flex items-center gap-2 text-xs">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <span className="font-medium text-[11px]">
+                Test Modu (Simülasyon) — Gerçek WhatsApp mesajı gönderilmez, test ortamında simüle edilir.
+              </span>
+            </div>
+          )}
+
           {/* Mode Switcher: Hemen Gönder vs Zamanla */}
           <div className="grid grid-cols-2 gap-1.5 p-1 bg-neutral-100 dark:bg-neutral-800 rounded-lg border border-neutral-200 dark:border-neutral-700 text-xs font-semibold">
             <button
@@ -400,6 +425,21 @@ export const SendConfirmModal: React.FC<SendConfirmModalProps> = ({
             </div>
           </div>
 
+          {/* Live Mode Explicit Acknowledgment Checkbox */}
+          {!isMockMode && (
+            <label className="flex items-start gap-2.5 p-3 rounded-lg border border-red-200 dark:border-red-900/60 bg-red-50/50 dark:bg-red-950/30 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={liveConfirmed}
+                onChange={(e) => setLiveConfirmed(e.target.checked)}
+                className="mt-0.5 rounded text-red-600 focus:ring-red-500"
+              />
+              <span className="text-[11px] leading-snug font-medium text-red-900 dark:text-red-200">
+                Karnelerin velilerin gerçek WhatsApp hatlarına iletileceğini anladım ve canlı gönderimi onaylıyorum.
+              </span>
+            </label>
+          )}
+
           {/* Important Technical Delivery Note */}
           <div className="p-3 bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 rounded-lg text-xs text-indigo-950 dark:text-indigo-200 space-y-1.5">
             <div className="flex items-center gap-1.5 font-semibold text-indigo-900 dark:text-indigo-300">
@@ -427,17 +467,28 @@ export const SendConfirmModal: React.FC<SendConfirmModalProps> = ({
           {sendMode === 'now' ? (
             <button
               onClick={handleStartOrSchedule}
-              className="flex items-center gap-1.5 px-5 py-2.5 rounded-lg bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 text-xs font-semibold hover:bg-neutral-800 dark:hover:bg-white transition-colors shadow-xs cursor-pointer active:scale-98"
+              disabled={!isMockMode && !liveConfirmed}
+              className={`flex items-center gap-1.5 px-5 py-2.5 rounded-lg text-xs font-semibold shadow-xs transition-all ${
+                !isMockMode && !liveConfirmed
+                  ? 'bg-neutral-300 dark:bg-neutral-800 text-neutral-500 cursor-not-allowed'
+                  : !isMockMode
+                    ? 'bg-red-600 hover:bg-red-700 text-white cursor-pointer active:scale-98'
+                    : 'bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 hover:bg-neutral-800 dark:hover:bg-white cursor-pointer active:scale-98'
+              }`}
             >
               <Send className="w-3.5 h-3.5" />
-              <span>Hemen Gönderimi Başlat ({readyItems.length})</span>
+              <span>
+                {!isMockMode
+                  ? `Canlı Gönderimi Başlat (${readyItems.length})`
+                  : `Hemen Gönderimi Başlat (${readyItems.length})`}
+              </span>
             </button>
           ) : (
             <button
               onClick={handleStartOrSchedule}
-              disabled={isPastTime}
+              disabled={isPastTime || (!isMockMode && !liveConfirmed)}
               className={`flex items-center gap-1.5 px-5 py-2.5 rounded-lg text-xs font-semibold shadow-xs transition-all ${
-                isPastTime
+                isPastTime || (!isMockMode && !liveConfirmed)
                   ? 'bg-neutral-300 dark:bg-neutral-800 text-neutral-500 cursor-not-allowed'
                   : 'bg-indigo-600 hover:bg-indigo-500 text-white cursor-pointer active:scale-98'
               }`}

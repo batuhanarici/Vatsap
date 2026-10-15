@@ -18,12 +18,15 @@ const {
   validateOpenWaRequest,
   validateDockerHealthOptions,
   calculateMatchScore,
+  LiveAuthorizationGate,
 } = require('./security.cjs');
 
 const execAsync = promisify(exec);
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 const credentialService = new CredentialService();
-const dispatchRepository = new DispatchRepository();
+const liveAuthorizationGate = new LiveAuthorizationGate();
+const dispatchRepository = new DispatchRepository({ liveGate: liveAuthorizationGate });
+dispatchRepository.setLiveAuthorizationGate(liveAuthorizationGate);
 
 let expressProcess = null;
 let activeServerPort = 3000;
@@ -526,6 +529,22 @@ ipcMain.handle('launchAgent:install', async () => {
 });
 
 // =============================================================================
+// Vatsap V2 — Live Authorization Gate IPC Handlers (P1.7 Pilot Güvenlik Kapısı)
+// =============================================================================
+
+ipcMain.handle('liveMode:getStatus', async () => {
+  return liveAuthorizationGate.getLiveModeStatus();
+});
+
+ipcMain.handle('liveMode:authorize', async (_, payload) => {
+  return liveAuthorizationGate.authorizeLiveMode(payload);
+});
+
+ipcMain.handle('liveMode:revoke', async () => {
+  return liveAuthorizationGate.revokeLiveMode();
+});
+
+// =============================================================================
 // Vatsap V2 — Dispatch Reservation & Idempotency IPC Handlers (P0-3B.2)
 // =============================================================================
 
@@ -543,7 +562,7 @@ ipcMain.handle('dispatch:reserve', async (_, rawParams, rawOptions) => {
       pdfName,
       pdfPath,
       pdfBase64,
-      provider,
+      provider = 'mock',
       id,
     } = rawParams;
 
@@ -564,6 +583,17 @@ ipcMain.handle('dispatch:reserve', async (_, rawParams, rawOptions) => {
     }
     if (!provider || typeof provider !== 'string') {
       throw new Error('dispatch:reserve: provider zorunludur.');
+    }
+
+    // P1.7 Live Dispatch Gate: Verify live permission before reservation
+    const liveCheck = liveAuthorizationGate.verifyLiveDispatchAllowed(provider);
+    if (!liveCheck.allowed) {
+      return {
+        success: false,
+        allowed: false,
+        code: liveCheck.code || 'LIVE_MODE_UNAUTHORIZED',
+        reason: liveCheck.reason || 'Canlı gönderim yetkisi aktif değil. Güvenlik gereği gerçek WhatsApp mesajı gönderilemez.',
+      };
     }
 
     // Security Invariant (P0-3B.2):
@@ -925,7 +955,7 @@ ipcMain.handle('dispatch:send', async (_, request) => {
       pdfName,
       pdfPath,
       pdfBase64,
-      provider = 'openwa',
+      provider = 'mock',
       caption,
       messageText,
       confirmationToken,
@@ -935,6 +965,21 @@ ipcMain.handle('dispatch:send', async (_, request) => {
 
     if (!studentId || !studentName || !phone || !examName || !pdfName) {
       throw new Error('dispatch:send: Eksik öğrenci veya sınav bilgisi.');
+    }
+
+    // P1.7 Live Authorization Gate: Protect real WhatsApp network routes
+    const liveCheck = liveAuthorizationGate.verifyLiveDispatchAllowed(provider);
+    if (!liveCheck.allowed) {
+      return {
+        success: false,
+        allowed: false,
+        code: liveCheck.code || 'LIVE_MODE_UNAUTHORIZED',
+        reason: liveCheck.reason || 'Canlı gönderim yetkisi aktif değil. Güvenlik gereği gerçek WhatsApp mesajı gönderilemez.',
+        error: liveCheck.reason || 'Canlı gönderim yetkisi aktif değil. Güvenlik gereği gerçek WhatsApp mesajı gönderilemez.',
+        outcome: 'failed',
+        pdfSent: false,
+        messageSent: false,
+      };
     }
 
     // 1. PDF Byte Hash & Size bounds check

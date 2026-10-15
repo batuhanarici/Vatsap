@@ -207,6 +207,15 @@ class DispatchRepository {
     this.unknownRetryTokens = new Map();
     this.matchApprovals = new Map();
     this.matchApprovalsByKey = new Map();
+    this.liveGate = options.liveGate || null;
+  }
+
+  setLiveAuthorizationGate(gate) {
+    this.liveGate = gate;
+  }
+
+  getLiveAuthorizationGate() {
+    return this.liveGate;
   }
 
   setStorageDir(dirPath) {
@@ -1232,6 +1241,32 @@ class DispatchRepository {
       phone,
       pdfSha256,
     });
+
+    // P1.7 Live Dispatch Safety Gate:
+    // When liveGate is configured or when requireLiveGate is set,
+    // real providers (openwa, meta_cloud) require active Live Authorization.
+    const effectiveGate = options?.liveGate || this.liveGate;
+    const isLiveProvider = provider !== 'mock';
+    if (isLiveProvider && (options?.requireLiveGate || effectiveGate)) {
+      if (effectiveGate) {
+        const liveCheck = effectiveGate.verifyLiveDispatchAllowed(provider);
+        if (!liveCheck.allowed) {
+          return {
+            allowed: false,
+            code: liveCheck.code || 'LIVE_MODE_UNAUTHORIZED',
+            reason: liveCheck.reason || 'Canlı gönderim yetkisi aktif değil. Gerçek WhatsApp gönderimi engellendi.',
+            dispatchKey,
+          };
+        }
+      } else if (options?.requireLiveGate) {
+        return {
+          allowed: false,
+          code: 'LIVE_MODE_UNAUTHORIZED',
+          reason: 'Canlı gönderim yetkisi aktif değil. Güvenlik gereği gerçek WhatsApp mesajı gönderilemez.',
+          dispatchKey,
+        };
+      }
+    }
 
     // Safety & Confirmation Invariants: Unconfirmed or low confidence matches cannot be reserved (P0-3A / P1.2.1 / P1.2.2)
     if (params.confidenceScore !== undefined && typeof params.confidenceScore === 'number' && params.confidenceScore < 70) {

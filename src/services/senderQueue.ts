@@ -326,7 +326,7 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
           pdfName: targetPdfFileName,
           pdfPath: pdfFile?.path,
           pdfBase64: base64,
-          provider: (provider as any)?.providerType || 'whatsapp',
+          provider: (provider as any)?.providerType || 'mock',
           caption: targetPdfFileName,
           messageText,
           openwaConfig: (provider as any)?.config,
@@ -397,7 +397,7 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
                   pdfName: targetPdfFileName,
                   pdfPath: pdfFile?.path,
                   pdfBase64: base64,
-                  provider: (provider as any)?.providerType || 'whatsapp',
+                  provider: (provider as any)?.providerType || 'mock',
                   caption: targetPdfFileName,
                   messageText,
                 });
@@ -476,7 +476,7 @@ export async function executeSenderQueue(options: QueueOptions): Promise<QueueSu
           pdfName: targetPdfFileName,
           pdfPath: pdfFile?.path,
           pdfBase64: base64,
-          provider: (provider as any)?.providerType || 'whatsapp',
+          provider: (provider as any)?.providerType || 'mock',
         });
 
         if (!reservation.allowed) {

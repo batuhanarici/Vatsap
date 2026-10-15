@@ -453,6 +453,8 @@ function computeMatchApprovalFingerprint({ studentId, phone, studentName, pdfNam
   return crypto.createHash('sha256').update(canonical, 'utf8').digest('hex');
 }
 
+const { LiveAuthorizationGate, VALID_CONFIRMATION_PHRASES } = require('./LiveAuthorizationGate.cjs');
+
 module.exports = {
   MAX_PDF_SIZE_BYTES,
   ALLOWED_OPENWA_PORT,
@@ -467,4 +469,6 @@ module.exports = {
   simplifyForComparison,
   calculateMatchScore,
   computeMatchApprovalFingerprint,
+  LiveAuthorizationGate,
+  VALID_CONFIRMATION_PHRASES,
 };

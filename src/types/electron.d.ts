@@ -293,6 +293,26 @@ export interface ElectronDispatchAPI {
   }) => Promise<string>;
 }
 
+export interface ElectronLiveModeAPI {
+  getStatus: () => Promise<{
+    isLiveAuthorized: boolean;
+    expiresAt: number | null;
+    remainingSeconds: number;
+  }>;
+  authorize: (payload: { confirmationPhrase: string; durationMinutes?: number }) => Promise<{
+    success: boolean;
+    authorized: boolean;
+    token?: string;
+    expiresAt?: number;
+    remainingMinutes?: number;
+    error?: string;
+  }>;
+  revoke: () => Promise<{
+    success: boolean;
+    authorized: boolean;
+  }>;
+}
+
 export interface ElectronAPI {
   isElectron: boolean;
   openDirectoryDialog: () => Promise<{
@@ -310,6 +330,7 @@ export interface ElectronAPI {
   getLaunchAgentStatus?: () => Promise<{ isInstalled: boolean; plistPath?: string }>;
   credentials?: ElectronCredentialsAPI;
   metaCloud?: ElectronMetaCloudAPI;
+  liveMode?: ElectronLiveModeAPI;
   dispatch?: ElectronDispatchAPI;
 }
 

@@ -8,6 +8,7 @@ export interface MetaCloudConfig {
 }
 
 export class MetaCloudProvider implements WhatsAppProvider {
+  public readonly providerType = 'meta_cloud';
   private config: MetaCloudConfig;
 
   constructor(config: MetaCloudConfig) {
