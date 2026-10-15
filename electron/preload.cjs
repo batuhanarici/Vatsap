@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getStatus: () => ipcRenderer.invoke('liveMode:getStatus'),
     authorize: (payload) => ipcRenderer.invoke('liveMode:authorize', payload),
     revoke: () => ipcRenderer.invoke('liveMode:revoke'),
+    createTicket: (params) => ipcRenderer.invoke('liveMode:createTicket', params),
+    verifyTicket: (payload) => ipcRenderer.invoke('liveMode:verifyTicket', payload),
   },
   dispatch: {
     send: (request) => ipcRenderer.invoke('dispatch:send', request),

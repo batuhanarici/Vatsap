@@ -311,6 +311,30 @@ export interface ElectronLiveModeAPI {
     success: boolean;
     authorized: boolean;
   }>;
+  createTicket: (payload: {
+    studentId: string;
+    phone: string;
+    pdfSha256: string;
+    examName: string;
+    messageText?: string;
+    ttlSeconds?: number;
+  }) => Promise<{
+    success: boolean;
+    ticketToken?: string;
+    expiresAt?: number;
+    fingerprint?: string;
+    ttlSeconds?: number;
+    error?: string;
+    code?: string;
+  }>;
+  verifyTicket: (payload: {
+    ticketToken: string;
+    params?: any;
+  }) => Promise<{
+    valid: boolean;
+    code?: string;
+    reason?: string;
+  }>;
 }
 
 export interface ElectronAPI {

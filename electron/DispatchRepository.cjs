@@ -1248,8 +1248,20 @@ class DispatchRepository {
     const effectiveGate = options?.liveGate || this.liveGate;
     const isLiveProvider = provider !== 'mock';
     if (isLiveProvider && (options?.requireLiveGate || effectiveGate)) {
-      if (effectiveGate) {
-        const liveCheck = effectiveGate.verifyLiveDispatchAllowed(provider);
+        const ticketToken =
+          options?.ticketToken ||
+          options?.liveTicketToken ||
+          params?.ticketToken ||
+          params?.liveTicketToken;
+        const liveCheck = effectiveGate.verifyLiveDispatchAllowed(provider, {
+          ...options,
+          ticketToken,
+          studentId,
+          phone,
+          pdfSha256,
+          examName,
+          messageText: params.messageText || params.caption,
+        });
         if (!liveCheck.allowed) {
           return {
             allowed: false,
