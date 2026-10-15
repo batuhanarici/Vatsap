@@ -166,6 +166,11 @@ function validateOpenWaRequest(options) {
     return { valid: false, error: `Yalnızca yerel HTTP protokolüne izin verilir (${parsedUrl.protocol} engellendi).` };
   }
 
+  // 1b. Credential in URL validation: Strictly no embedded username or password
+  if (parsedUrl.username || parsedUrl.password) {
+    return { valid: false, error: 'Erişim reddedildi: URL içinde kimlik bilgisi (kullanıcı adı veya şifre) bulunamaz.' };
+  }
+
   // 2. Hostname validation: Strictly 127.0.0.1 or localhost
   if (!ALLOWED_OPENWA_HOSTS.has(parsedUrl.hostname)) {
     return { valid: false, error: `Erişim reddedildi: Hedef adres ${parsedUrl.hostname} izinli yerel OpenWA adresi değildir.` };
